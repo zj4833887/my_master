@@ -56,6 +56,9 @@ flutter:
     - assets/images/baodao.jpg
     - assets/images/title.jpg
     - assets/images/dise.jpg
+    - assets/images/device.png
+    - assets/images/jsj.png
+    - assets/images/didian.png
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.
