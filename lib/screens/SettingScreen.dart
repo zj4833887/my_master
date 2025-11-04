@@ -2,21 +2,26 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
 import './MeetingDetailScreen.dart';
+import 'package:hexcolor/hexcolor.dart';
+
 class TreeNode {
   final String title;
   final List<TreeNode> children;
   final bool isMeeting;
-  
+
   TreeNode(this.title, {this.children = const [], this.isMeeting = false});
 }
 
 final List<TreeNode> meetingTree = [
-  TreeNode('滨海市第三次代表大会', children: [
-    TreeNode('开幕式', isMeeting: true),
-    TreeNode('第一次全体会议', isMeeting: true),
-    TreeNode('第二次全体会议', isMeeting: true),
-    TreeNode('闭幕式', isMeeting: true),
-  ]),
+  TreeNode(
+    '滨海市第三次代表大会',
+    children: [
+      TreeNode('开幕式', isMeeting: true),
+      TreeNode('第一次全体会议', isMeeting: true),
+      TreeNode('第二次全体会议', isMeeting: true),
+      TreeNode('闭幕式', isMeeting: true),
+    ],
+  ),
 ];
 
 void main() {
@@ -28,9 +33,7 @@ class MeetingCheckInApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: '电子会议报到系统',
-      theme: ThemeData(
-        primarySwatch: Colors.red,
-      ),
+      theme: ThemeData(primarySwatch: Colors.red),
       home: MeetingCheckInScreen(),
       debugShowCheckedModeBanner: false,
     );
@@ -63,7 +66,7 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
     _timer = Timer.periodic(Duration(seconds: 1), (timer) {
       _updateTime();
     });
-    
+
     // 初始化根节点为展开状态
     _expandedState['滨海市第三次代表大会'] = true;
   }
@@ -76,18 +79,18 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
 
   void _updateTime() {
     setState(() {
-      _currentTime = DateFormat('yyyy/MM/dd HH:mm:ss').format(DateTime.now());
+      _currentTime = DateFormat('yyyy年MM月dd日 HH:mm:ss').format(DateTime.now());
     });
   }
 
   void _enterMeeting() {
-  Navigator.push(
-    context,
-    MaterialPageRoute(
-      builder: (context) => MeetingDetailScreen(meetingName: _currentMeeting),
-    ),
-  );
-}
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => MeetingDetailScreen(meetingName: _currentMeeting),
+      ),
+    );
+  }
 
   void _selectMeeting(String meeting) {
     setState(() {
@@ -109,7 +112,7 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
   Widget _buildTree(TreeNode node, {int level = 0}) {
     final hasChildren = node.children.isNotEmpty;
     final isExpanded = _expandedState[node.title] ?? (level == 0); // 根节点默认展开
-    
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -117,8 +120,8 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
         Container(
           margin: EdgeInsets.only(left: (level * 20.0)),
           decoration: BoxDecoration(
-            color: node.isMeeting && _currentMeeting == node.title 
-                ? Colors.red[50] 
+            color: node.isMeeting && _currentMeeting == node.title
+                ? Colors.red[50]
                 : (isExpanded && hasChildren ? Colors.grey[50] : null),
             borderRadius: BorderRadius.circular(4),
           ),
@@ -141,9 +144,14 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
               node.title,
               style: TextStyle(
                 fontSize: 16,
-                fontWeight: node.isMeeting ? FontWeight.normal : FontWeight.w500,
-                color: node.isMeeting 
-                    ? (_currentMeeting == node.title ? Colors.red[700] : Colors.black87)
+                fontFamily: 'FZXBYS',
+                fontWeight: node.isMeeting
+                    ? FontWeight.normal
+                    : FontWeight.w500,
+                color: node.isMeeting
+                    ? (_currentMeeting == node.title
+                          ? Colors.red[700]
+                          : Colors.black87)
                     : Colors.blue[800],
               ),
             ),
@@ -162,9 +170,10 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
           ),
         ),
         // 子节点
-        if (hasChildren && isExpanded) ...node.children.map((child) => 
-          _buildTree(child, level: level + 1)
-        ).toList(),
+        if (hasChildren && isExpanded)
+          ...node.children
+              .map((child) => _buildTree(child, level: level + 1))
+              .toList(),
       ],
     );
   }
@@ -172,51 +181,54 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.red[700],
-      body: SafeArea(
+      body: Container(
+        width: double.infinity,
+        height: double.infinity,
+        decoration: BoxDecoration(
+          image: DecorationImage(
+            image: AssetImage('assets/images/title.jpg'),
+            fit: BoxFit.cover,
+          ),
+        ),
         child: Column(
           children: [
-            _buildHeader(),
+            // 顶部背景图区域
+            Container(
+              height: 140,
+              width: double.infinity,
+              decoration: BoxDecoration(
+                image: DecorationImage(
+                  image: AssetImage('assets/images/title.jpg'),
+                  fit: BoxFit.cover,
+                ),
+              ),
+            ),
+            // 主体内容区域
             Expanded(
               child: Container(
-                margin: EdgeInsets.all(16),
-                child: Row(
-                  children: [
-                    _buildMeetingStructure(),
-                    SizedBox(width: 16),
-                    _buildMeetingOverview(),
-                  ],
+                decoration: BoxDecoration(
+                  image: DecorationImage(
+                    image: AssetImage('assets/images/dise.jpg'),
+                    fit: BoxFit.cover,
+                  ),
+                ),
+                child: SafeArea(
+                  top: false,
+                  child: Container(
+                    margin: EdgeInsets.all(16),
+                    child: Row(
+                      children: [
+                        _buildMeetingStructure(),
+                        SizedBox(width: 16),
+                        _buildMeetingOverview(),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildHeader() {
-    return Container(
-      height: 80,
-      color: Colors.red[700],
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.star,
-            color: Colors.yellow,
-            size: 40,
-          ),
-          SizedBox(width: 16),
-          Text(
-            '电子会议报到系统主控终端',
-            style: TextStyle(
-              color: Colors.yellow,
-              fontSize: 28,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -248,6 +260,7 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                   '会议组织结构',
                   style: TextStyle(
                     fontSize: 20,
+                    fontFamily: 'FZXBYS',
                     fontWeight: FontWeight.bold,
                     color: Colors.red[700],
                   ),
@@ -265,9 +278,9 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                 child: SingleChildScrollView(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: meetingTree.map((node) => 
-                      _buildTree(node)
-                    ).toList(),
+                    children: meetingTree
+                        .map((node) => _buildTree(node))
+                        .toList(),
                   ),
                 ),
               ),
@@ -304,36 +317,12 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                   '会议情况概览',
                   style: TextStyle(
                     fontSize: 20,
+                    fontFamily: 'FZXBYS',
                     fontWeight: FontWeight.bold,
                     color: Colors.red[700],
                   ),
                 ),
               ],
-            ),
-            SizedBox(height: 16),
-            // 当前时间显示
-            Container(
-              padding: EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.red[50],
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: Colors.red[100]!),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.access_time, color: Colors.red[700]),
-                  SizedBox(width: 8),
-                  Text(
-                    _currentTime,
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.red[700],
-                    ),
-                  ),
-                ],
-              ),
             ),
             SizedBox(height: 16),
             // 当前会议信息
@@ -353,7 +342,11 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                       SizedBox(width: 8),
                       Text(
                         '当前会议:',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontFamily: 'FZXBYS',
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ],
                   ),
@@ -361,6 +354,7 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                     _currentMeeting,
                     style: TextStyle(
                       fontSize: 18,
+                      fontFamily: 'FZXBYS',
                       fontWeight: FontWeight.bold,
                       color: Colors.blue[700],
                     ),
@@ -376,9 +370,13 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
               child: ElevatedButton.icon(
                 onPressed: _enterMeeting,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red[700],
+                  backgroundColor: HexColor('#A30014'),
                   foregroundColor: Colors.white,
-                  textStyle: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  textStyle: TextStyle(
+                    fontSize: 18,
+                    fontFamily: 'FZXBYS',
+                    fontWeight: FontWeight.bold,
+                  ),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(6),
                   ),
@@ -442,6 +440,7 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                   type,
                   style: TextStyle(
                     fontSize: 18,
+                    fontFamily: 'FZXBYS',
                     fontWeight: FontWeight.bold,
                     color: color[700],
                   ),
@@ -459,12 +458,17 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                       children: [
                         Text(
                           entry.key,
-                          style: TextStyle(fontSize: 15, color: Colors.grey[700]),
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontFamily: 'FZXBYS',
+                            color: Colors.grey[700],
+                          ),
                         ),
                         Text(
                           entry.value.toString(),
                           style: TextStyle(
                             fontSize: 16,
+                            fontFamily: 'TimesNewRoman',
                             fontWeight: FontWeight.bold,
                             color: color[700],
                           ),

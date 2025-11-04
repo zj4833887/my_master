@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'screens/login.dart';
+
 void main() {
   runApp(const MyApp());
 }
@@ -33,10 +34,10 @@ class MyApp extends StatelessWidget {
       ),
       initialRoute: '/login',
       routes: {
-              '/login': (context) => const LoginScreen(), // 登录页路由
-              // 定义其他页面的路由
-              // '/home': (context) => const HomeScreen(), // 主页路由
-            },
+        '/login': (context) => const LoginScreen(), // 登录页路由
+        // 定义其他页面的路由
+        // '/home': (context) => const HomeScreen(), // 主页路由
+      },
     );
   }
 }

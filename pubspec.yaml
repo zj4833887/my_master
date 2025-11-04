@@ -35,6 +35,7 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
+  hexcolor: ^2.0.7
 
 dev_dependencies:
   flutter_test:
@@ -59,14 +60,24 @@ flutter:
     - assets/images/device.png
     - assets/images/jsj.png
     - assets/images/didian.png
+    - assets/images/device_map.png
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
   fonts:
-    - family: SimSun # 定义字体家族名称
+    - family: SimSun
       fonts:
-           - asset: assets/fonts/simsunb.ttf # 指定字体文件路径
+        - asset: assets/fonts/simsunb.ttf
+          weight: 400  # 常规字重
+    - family: FZXBYS
+      fonts:
+        - asset: assets/fonts/方正小标宋_GBK.TTF
+          weight: 400
+    - family: TimesNewRoman
+      fonts:
+        - asset: assets/fonts/TimesNewRoman.ttf
+          weight: 400 
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

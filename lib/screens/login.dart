@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http; // 用于发起网络请求
 import 'dart:convert'; // 用于处理 JSON 编码和解码
 import './settingScreen.dart'; // 导入设置页面
+
 /// 应用的主入口函数
 ///
 /// 在Flutter中，main函数是应用的启动入口
@@ -26,7 +27,8 @@ class MyApp extends StatelessWidget {
     return MaterialApp(
       debugShowCheckedModeBanner: false, // 移除右上角的调试横幅
       title: '电子会议报到系统', // 应用的名称
-      theme: ThemeData( // 应用的主题设置
+      theme: ThemeData(
+        // 应用的主题设置
         primarySwatch: Colors.red, // 主色调为蓝色
         visualDensity: VisualDensity.adaptivePlatformDensity, // 视觉密度适配不同平台
       ),
@@ -74,62 +76,63 @@ class _LoginScreenState extends State<LoginScreen> {
   ///
   /// 这个方法处理登录逻辑，包括验证输入和模拟网络请求
   /// 在实际应用中，这里会替换为真实的API调用[4](@ref)
-void _simulateLogin() async {
-  // 更新状态，显示加载中UI
-  setState(() {
-    _isLoading = true;
-    _dialogVisible = false; // 隐藏之前的错误对话框
-  });
-
-  // 简单的输入验证逻辑
-  if (_usernameController.text.isEmpty || _passwordController.text.isEmpty) {
-    // 如果用户名或密码为空，显示提示对话框
+  void _simulateLogin() async {
+    // 更新状态，显示加载中UI
     setState(() {
-      _isLoading = false;
-      _dialogVisible = true;
+      _isLoading = true;
+      _dialogVisible = false; // 隐藏之前的错误对话框
     });
-    return; // 直接返回，不执行后续请求
-  }
 
-  // 替换为你的实际 API 端点
-  final String apiUrl = "http://localhost:8083/control/login";
-  try {
-final response = await http.post(
-  Uri.parse(apiUrl),
-  body: {
-    'name': _usernameController.text,
-    'password': _passwordController.text,
-  },
-);
-print(response.body); // 打印响应体，调试用
-if (response.statusCode == 200) {
-  Map<String, dynamic> responseData = jsonDecode(response.body);
-  if (responseData['code'] == 200) {
-    // 登录成功
-    print('登录成功: ${responseData['message']}');
-  } else {
-    // 登录失败
-    print('登录失败: ${responseData['message']}');
-  }
-} else {
-  // 请求失败
-  print('请求失败:');
-}
+    // 简单的输入验证逻辑
+    if (_usernameController.text.isEmpty || _passwordController.text.isEmpty) {
+      // 如果用户名或密码为空，显示提示对话框
+      setState(() {
+        _isLoading = false;
+        _dialogVisible = true;
+      });
+      return; // 直接返回，不执行后续请求
+    }
+
+    // 替换为你的实际 API 端点
+    final String apiUrl = "http://localhost:8083/control/login";
+    try {
+      final response = await http.post(
+        Uri.parse(apiUrl),
+        body: {
+          'name': _usernameController.text,
+          'password': _passwordController.text,
+        },
+      );
+      print(response.body); // 打印响应体，调试用
+      if (response.statusCode == 200) {
+        Map<String, dynamic> responseData = jsonDecode(response.body);
+        if (responseData['code'] == 200) {
+          // 登录成功
+          print('登录成功: ${responseData['message']}');
+        } else {
+          // 登录失败
+          print('登录失败: ${responseData['message']}');
+        }
+      } else {
+        // 请求失败
+        print('请求失败:');
+      }
     } catch (error) {
-        print('请求发生错误: $error');
-        // 显示错误信息给用户
+      print('请求发生错误: $error');
+      // 显示错误信息给用户
     } finally {
-        // 确保在请求完成或出错后隐藏加载圈
-        setState(() {
-            _isLoading = false;
-        });
-          // 无论成功或失败都跳转
-        Navigator.push(
+      // 确保在请求完成或出错后隐藏加载圈
+      setState(() {
+        _isLoading = false;
+      });
+      // 无论成功或失败都跳转
+      Navigator.push(
         context,
         MaterialPageRoute(builder: (context) => MeetingCheckInScreen()),
-    );
+      );
     }
-}
+  }
+
   /// 构建登录页面的UI
   ///
   /// 这个方法返回登录页面的完整Widget树
@@ -154,20 +157,25 @@ if (response.statusCode == 200) {
 
           // 中心内容区域，包含登录表单
           Center(
-            child: SingleChildScrollView( // 支持滚动，防止键盘弹出时内容被遮挡
+            child: SingleChildScrollView(
+              // 支持滚动，防止键盘弹出时内容被遮挡
               child: Container(
                 width: 400, // 固定宽度
                 padding: const EdgeInsets.all(32), // 内边距
-                child: Card( // 卡片式设计，提升UI层次感
+                child: Card(
+                  // 卡片式设计，提升UI层次感
                   elevation: 8, // 阴影高度
-                  shape: RoundedRectangleBorder( // 圆角矩形形状
+                  shape: RoundedRectangleBorder(
+                    // 圆角矩形形状
                     borderRadius: BorderRadius.circular(16),
                   ),
                   child: Padding(
                     padding: const EdgeInsets.all(24), // 卡片内边距
-                    child: Form( // 表单组件，用于管理输入字段和验证
+                    child: Form(
+                      // 表单组件，用于管理输入字段和验证
                       key: _formKey, // 表单的全局键
-                      child: Column( // 垂直排列的表单字段
+                      child: Column(
+                        // 垂直排列的表单字段
                         mainAxisSize: MainAxisSize.min, // 列大小根据内容调整
                         children: [
                           // 登录标题
@@ -175,27 +183,30 @@ if (response.statusCode == 200) {
                             '系统登录',
                             style: TextStyle(
                               fontSize: 24,
+                              fontFamily: 'FZXBYS',
                               fontWeight: FontWeight.bold,
                               color: Colors.black, // 深蓝色文字
                             ),
                           ),
                           const SizedBox(height: 32), // 间距
-
                           // 用户名输入框
                           TextFormField(
                             controller: _usernameController, // 控制器
                             decoration: InputDecoration(
                               labelText: '账号', // 标签文字
                               prefixIcon: const Icon(Icons.person), // 前缀图标
-                              border: OutlineInputBorder( // 边框样式
+                              border: OutlineInputBorder(
+                                // 边框样式
                                 borderRadius: BorderRadius.circular(8),
                               ),
-                              contentPadding: const EdgeInsets.symmetric( // 内容边距
+                              contentPadding: const EdgeInsets.symmetric(
+                                // 内容边距
                                 horizontal: 16,
                                 vertical: 14,
                               ),
                             ),
-                            validator: (value) { // 验证器函数
+                            validator: (value) {
+                              // 验证器函数
                               if (value == null || value.isEmpty) {
                                 return '请输入账号'; // 验证失败的消息
                               }
@@ -204,7 +215,6 @@ if (response.statusCode == 200) {
                             onFieldSubmitted: (_) => _simulateLogin(), // 回车键提交
                           ),
                           const SizedBox(height: 20), // 间距
-
                           // 密码输入框
                           TextFormField(
                             controller: _passwordController, // 控制器
@@ -212,10 +222,12 @@ if (response.statusCode == 200) {
                             decoration: InputDecoration(
                               labelText: '密码', // 标签文字
                               prefixIcon: const Icon(Icons.lock), // 前缀图标
-                              suffixIcon: IconButton( // 后缀图标（眼睛按钮）
+                              suffixIcon: IconButton(
+                                // 后缀图标（眼睛按钮）
                                 icon: Icon(
                                   _isPasswordVisible
-                                      ? Icons.visibility // 可见状态图标
+                                      ? Icons
+                                            .visibility // 可见状态图标
                                       : Icons.visibility_off, // 不可见状态图标
                                   color: Colors.grey,
                                 ),
@@ -226,15 +238,18 @@ if (response.statusCode == 200) {
                                   });
                                 },
                               ),
-                              border: OutlineInputBorder( // 边框样式
+                              border: OutlineInputBorder(
+                                // 边框样式
                                 borderRadius: BorderRadius.circular(8),
                               ),
-                              contentPadding: const EdgeInsets.symmetric( // 内容边距
+                              contentPadding: const EdgeInsets.symmetric(
+                                // 内容边距
                                 horizontal: 16,
                                 vertical: 14,
                               ),
                             ),
-                            validator: (value) { // 验证器函数
+                            validator: (value) {
+                              // 验证器函数
                               if (value == null || value.isEmpty) {
                                 return '请输入密码'; // 验证失败的消息
                               }
@@ -243,34 +258,43 @@ if (response.statusCode == 200) {
                             onFieldSubmitted: (_) => _simulateLogin(), // 回车键提交
                           ),
                           const SizedBox(height: 32), // 间距
-
                           // 登录按钮
                           SizedBox(
                             width: double.infinity, // 宽度充满父容器
                             height: 50, // 固定高度
                             child: ElevatedButton(
-                              onPressed: _isLoading ? null : _simulateLogin, // 加载时禁用按钮
+                              onPressed: _isLoading
+                                  ? null
+                                  : _simulateLogin, // 加载时禁用按钮
                               style: ElevatedButton.styleFrom(
-                                 backgroundColor: Color(0xFF900000), // 按钮背景色
-                                shape: RoundedRectangleBorder( // 按钮形状
+                                backgroundColor: Color(0xFF900000), // 按钮背景色
+                                shape: RoundedRectangleBorder(
+                                  // 按钮形状
                                   borderRadius: BorderRadius.circular(8),
                                 ),
-                                padding: const EdgeInsets.symmetric(vertical: 14), // 按钮内边距
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 14,
+                                ), // 按钮内边距
                               ),
                               child: _isLoading
-                                  ? const SizedBox( // 加载中显示进度指示器
+                                  ? const SizedBox(
+                                      // 加载中显示进度指示器
                                       width: 20,
                                       height: 20,
                                       child: CircularProgressIndicator(
                                         strokeWidth: 2, // 进度条粗细
-                                        valueColor: AlwaysStoppedAnimation<Color>(Colors.white), // 进度条颜色
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                              Colors.white,
+                                            ), // 进度条颜色
                                       ),
                                     )
-                                  : const Text( // 正常状态显示文字
+                                  : const Text(
+                                      // 正常状态显示文字
                                       '登      录',
                                       style: TextStyle(
-                                        fontSize: 24,
-                                        fontFamily: 'SimSun',
+                                        fontSize: 28,
+                                        fontFamily: 'FZXBYS',
                                         color: Colors.white,
                                       ),
                                     ),

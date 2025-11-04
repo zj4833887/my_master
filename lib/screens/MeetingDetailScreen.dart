@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:hexcolor/hexcolor.dart';
 
 class MeetingDetailScreen extends StatefulWidget {
   final String meetingName;
@@ -12,6 +13,7 @@ class MeetingDetailScreen extends StatefulWidget {
 class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  bool _isMeetingManagementSelected = true;
 
   // 统计数据 - 完全按照图片中的数值
   final Map<String, int> attendStats = {
@@ -56,8 +58,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
               '$title:',
               style: TextStyle(
                 fontSize: 40,
+                fontFamily: 'FZXBYS',
                 fontWeight: FontWeight.bold,
-                color: Colors.yellow,
+                color: HexColor('#FFFF00'),
                 shadows: [
                   Shadow(
                     color: Colors.black54,
@@ -102,6 +105,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                           '$label:',
                           style: TextStyle(
                             fontSize: 28,
+                            fontFamily: 'FZXBYS',
                             fontWeight: FontWeight.w600,
                             color: Colors.black,
                           ),
@@ -110,9 +114,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                         Text(
                           value.toString(),
                           style: TextStyle(
+                            fontFamily: 'TimesNewRoman',
                             fontSize: 26,
                             fontWeight: FontWeight.bold,
-                            color: Colors.red,
+                            color: HexColor('#A30014'),
                           ),
                         ),
                       ],
@@ -129,56 +134,35 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   // 其他方法保持不变...
   Widget _buildDeviceGrid() {
-    final items = List.generate(24, (i) => i);
-    return GridView.builder(
-      padding: const EdgeInsets.all(12),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 6,
-        mainAxisSpacing: 12,
-        crossAxisSpacing: 12,
-        childAspectRatio: 0.7,
+    return Container(
+      width: double.infinity,
+      height: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        image: DecorationImage(
+          image: AssetImage("assets/images/device_map.png"), // 设备点位图底图
+          fit: BoxFit.contain, // 保持比例并完整显示
+        ),
+        color: Colors.grey[100], // 背景色
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade300),
       ),
-      itemCount: items.length,
-      itemBuilder: (context, index) {
-        return Column(
-          children: [
-            Container(
-              height: 70,
-              decoration: BoxDecoration(
-                color: Colors.white,
-                border: Border.all(color: Colors.grey.shade300),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black12,
-                    blurRadius: 2,
-                    offset: Offset(1, 1),
-                  ),
-                ],
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Center(
-                child: Text(
-                  index % 3 == 0 ? '空闲' : (index % 3 == 1 ? '结束' : '工作'),
-                  style: TextStyle(
-                    color: index % 3 == 0
-                        ? Colors.black54
-                        : (index % 3 == 1 ? Colors.orange : Colors.blue),
-                  ),
-                ),
-              ),
-            ),
-            SizedBox(height: 8),
-            Text('0${(index % 12) + 1}—厅', style: TextStyle(fontSize: 12)),
-            Text(
-              '出席: ${8 - (index % 3)} 列席: ${index % 2}',
-              style: TextStyle(fontSize: 11, color: Colors.grey[700]),
-            ),
-          ],
-        );
-      },
+      // child: Center(
+      //   child: Text(
+      //     '设备点位图',
+      //     style: TextStyle(
+      //       fontFamily: 'FZXBYS',
+      //       fontSize: 24,
+      //       color: Colors.black54,
+      //       fontWeight: FontWeight.bold,
+      //     ),
+      //   ),
+      // ),
     );
   }
 
+  //设备列表
+  //设备列表
   Widget _buildAttendList() {
     // 模拟设备数据 - 根据图片中的状态和布局
     final devices = [
@@ -281,7 +265,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       {
         'name': '报到显示终端',
         'ProcessType': 'Client',
-        'status': '设备',
+        'status': '工作',
         'attend': 0,
         'guest': 0,
         'color': Colors.grey,
@@ -289,7 +273,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       {
         'name': '报到显示终端',
         'ProcessType': 'Client',
-        'status': '设备',
+        'status': '联机',
         'attend': 0,
         'guest': 0,
         'color': Colors.grey,
@@ -297,7 +281,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       {
         'name': '报到显示终端',
         'ProcessType': 'Client',
-        'status': '设备',
+        'status': '脱机',
         'attend': 0,
         'guest': 0,
         'color': Colors.grey,
@@ -305,7 +289,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       {
         'name': '报到显示终端',
         'ProcessType': 'Client',
-        'status': '设备',
+        'status': '工作',
         'attend': 0,
         'guest': 0,
         'color': Colors.grey,
@@ -313,7 +297,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       {
         'name': '报到显示终端',
         'ProcessType': 'Client',
-        'status': '设备',
+        'status': '工作',
         'attend': 0,
         'guest': 0,
         'color': Colors.grey,
@@ -321,7 +305,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       {
         'name': '地垫式报到设备',
         'ProcessType': 'didian',
-        'status': '设备',
+        'status': '工作',
         'attend': 0,
         'guest': 0,
         'color': Colors.grey,
@@ -331,25 +315,30 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return GridView.builder(
       padding: const EdgeInsets.all(10),
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 7, // 修正：应该是3而不是9
-        mainAxisSpacing: 12,
-        crossAxisSpacing: 12,
+        crossAxisCount: 7,
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
         childAspectRatio: 0.8,
       ),
       itemCount: devices.length,
       itemBuilder: (context, index) {
+        print(context);
         final device = devices[index];
-        final bool isEquipment = device['ProcessType'] == 'rack';
-
+        final String processType = device['ProcessType'] as String;
+        final bool isRack = processType == 'rack';
+        final String status = device['status'] as String; // 先定义status变量
+        final Color textColor = status == '工作'
+            ? Colors.black
+            : Colors.white; // 然后使用它
         return Container(
           decoration: BoxDecoration(
-            color: isEquipment ? Colors.grey[200] : Colors.white,
+            color: isRack ? Colors.grey[200] : Colors.white,
             borderRadius: BorderRadius.circular(8),
             border: Border.all(color: Colors.grey.shade300, width: 1),
             boxShadow: [
               BoxShadow(
                 color: Colors.black12,
-                blurRadius: 4,
+                blurRadius: 1,
                 offset: Offset(0, 2),
               ),
             ],
@@ -363,9 +352,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                 height: 120,
                 decoration: BoxDecoration(
                   image: DecorationImage(
-                    image: AssetImage(
-                      _getDeviceImage(device['ProcessType'] as String),
-                    ),
+                    image: AssetImage(_getDeviceImage(processType)),
                     fit: BoxFit.contain,
                   ),
                   borderRadius: BorderRadius.only(
@@ -375,15 +362,14 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                 ),
                 child: Center(
                   child: Transform.translate(
-                    // 矩形框的装饰
-                    offset: Offset(-1, -15),
+                    // 根据设备类型调整矩形框位置
+                    offset: _getStatusOffset(processType),
                     child: Container(
-                      // 矩形框的装饰
                       decoration: BoxDecoration(
                         color: _getStatusBackgroundColor(
                           device['status'] as String,
                         ),
-                        borderRadius: BorderRadius.circular(0),
+                        borderRadius: BorderRadius.circular(4),
                         border: Border.all(
                           color: Colors.white.withOpacity(0.5),
                           width: 1.5,
@@ -395,16 +381,17 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                           ),
                         ],
                       ),
-                      padding: EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 12,
-                      ),
+                      padding: _getStatusPadding(processType),
                       child: Text(
-                        _getStatusDisplayText(device['status'] as String),
+                        _getStatusDisplayText(
+                          device['status'] as String,
+                          processType, // 传入设备类型决定是否换行
+                        ),
                         style: TextStyle(
-                          fontSize: 16,
+                          fontSize: _getStatusFontSize(processType),
                           fontWeight: FontWeight.bold,
-                          color: Colors.white,
+                          color: textColor,
+                          fontFamily: 'FZXBYS',
                           shadows: [
                             Shadow(color: Colors.black, offset: Offset(1, 1)),
                           ],
@@ -421,30 +408,36 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                 padding: EdgeInsets.all(3),
                 child: Text(
                   device['name'] as String,
-                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    fontFamily: 'FZXBYS',
+                  ),
                   textAlign: TextAlign.center,
                 ),
               ),
 
               // 人数信息（仅显示会议厅）
-              if (!isEquipment) ...[
-                Padding(
-                  padding: EdgeInsets.all(0),
-                  child: Column(
-                    children: [
-                      Text(
-                        '出席: ${device['attend']}',
-                        style: TextStyle(fontSize: 12),
+              Padding(
+                padding: EdgeInsets.all(0),
+                child: Column(
+                  children: [
+                    Text(
+                      '出席: ${device['attend']}',
+                      style: TextStyle(fontSize: 12, fontFamily: 'FZXBYS'),
+                    ),
+                    SizedBox(height: 2),
+                    Text(
+                      '列席: ${device['guest']}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey[700],
+                        fontFamily: 'FZXBYS',
                       ),
-                      SizedBox(height: 2),
-                      Text(
-                        '列席: ${device['guest']}',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[700]),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ],
           ),
         );
@@ -465,88 +458,422 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     }
   }
 
+  // 根据设备类型获取状态框偏移量
+  Offset _getStatusOffset(String processType) {
+    switch (processType) {
+      case 'rack': // 会议厅设备
+        return Offset(-1, -15);
+      case 'Client': // 报到显示终端
+        return Offset(2, -13);
+      case 'didian': // 地垫式报到设备
+        return Offset(-1, 38);
+      default:
+        return Offset(-1, -15);
+    }
+  }
+
+  // 根据设备类型获取状态框内边距
+  EdgeInsets _getStatusPadding(String processType) {
+    switch (processType) {
+      case 'rack': // 会议厅设备
+        return EdgeInsets.symmetric(horizontal: 6, vertical: 12);
+      case 'Client': // 报到显示终端
+        return EdgeInsets.symmetric(horizontal: 26, vertical: 9);
+      case 'didian': // 地垫式报到设备
+        return EdgeInsets.symmetric(horizontal: 44, vertical: 9);
+      default:
+        return EdgeInsets.symmetric(horizontal: 6, vertical: 12);
+    }
+  }
+
+  // 根据设备类型获取状态文字大小
+  double _getStatusFontSize(String processType) {
+    switch (processType) {
+      case 'rack': // 会议厅设备
+        return 16;
+      case 'Client': // 报到显示终端
+        return 14;
+      case 'didian': // 地垫式报到设备
+        return 12;
+      default:
+        return 16;
+    }
+  }
+
   // 根据状态获取背景颜色
   Color _getStatusBackgroundColor(String status) {
     switch (status) {
       case '工作':
-        return Colors.white; // 半透明蓝色
+        return HexColor('#FFFFFF'); // 半透明白色
       case '结束':
-        return Colors.orange; // 半透明橙色
+        return HexColor('#FF6600'); // 半透明橙色
       case '空闲':
-        return Colors.black; // 半透明灰色
+        return HexColor('#000000'); // 半透明黑色
+      case '联机':
+        return Colors.blue;
+      case '脱机':
+        return Colors.green; // 半透明红色
+      case '设备':
+        return Colors.purple.withOpacity(0.8); // 半透明紫色
       case '重报':
-        return Colors.green; // 半透明紫色
+        return HexColor('#00F7DE'); // 半透明绿色
       case '错卡':
-        return Colors.red;
+        return HexColor('#ffa500'); // 半透明红色
       default:
         return Colors.black.withOpacity(0.6); // 默认半透明黑色
     }
   }
 
-  // 修改状态显示文本
-  String _getStatusDisplayText(String status) {
-    switch (status) {
-      case '空闲':
-        return '空\n闲';
-      case '联机':
-        return '联\n机';
-      case '工作':
-        return '工\n作';
-      case '结束':
-        return '结\n束';
-      case '脱机':
-        return '脱\n机';
-      case '错卡':
-        return '错\n卡';
-      case '报到':
-        return '报\n到';
-      case '重报':
-        return '重\n报';
-      default:
-        return status;
+  // 修改状态显示文本，只有rack设备需要换行
+  String _getStatusDisplayText(String status, String processType) {
+    // 只有rack设备需要换行
+    if (processType == 'rack') {
+      switch (status) {
+        case '空闲':
+          return '空\n闲';
+        case '联机':
+          return '联\n机';
+        case '工作':
+          return '工\n作';
+        case '结束':
+          return '结\n束';
+        case '脱机':
+          return '脱\n机';
+        case '错卡':
+          return '错\n卡';
+        case '报到':
+          return '报\n到';
+        case '重报':
+          return '重\n报';
+        default:
+          return status.length > 2
+              ? '${status.substring(0, 2)}\n${status.substring(2)}'
+              : status;
+      }
+    } else {
+      // 其他设备类型不换行
+      return status;
     }
   }
 
-  // 辅助方法 - 需要放在类中，而不是方法内
-  ColorFilter _getStatusColorFilter(String status) {
-    switch (status) {
-      case '工作':
-        return ColorFilter.mode(Colors.blue.withOpacity(0.6), BlendMode.color);
-      case '结束':
-        return ColorFilter.mode(
-          Colors.orange.withOpacity(0.6),
-          BlendMode.color,
-        );
-      case '空闲':
-      default:
-        return ColorFilter.mode(Colors.grey.withOpacity(0.6), BlendMode.color);
-    }
-  }
+  // 显示管理内容
+  Widget _buildDisplayManagementContent() {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 三个红色按钮
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _buildDisplayButton('会标', Icons.flag),
+              _buildDisplayButton('报到情况', Icons.people),
+              _buildDisplayButton('标语', Icons.text_fields),
+            ],
+          ),
 
-  Widget _buildFunctionButton(String title, IconData icon, {Color? color}) {
-    return ElevatedButton.icon(
-      onPressed: () {
-        if (title == '退出') Navigator.pop(context);
-      },
-      icon: Icon(icon, color: color ?? Colors.red),
-      label: Text(title),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: (color ?? Colors.red).withOpacity(0.08),
-        foregroundColor: color ?? Colors.red,
-        padding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        textStyle: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+          SizedBox(height: 20),
+
+          // 表格标题
+          Text(
+            '显示内容管理',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              fontFamily: 'FZXBYS',
+              color: Colors.black87,
+            ),
+          ),
+
+          SizedBox(height: 12),
+
+          // 表格
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey[300]!),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Column(
+              children: [
+                // 表头
+                Container(
+                  padding: EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[100],
+                    border: Border(
+                      bottom: BorderSide(color: Colors.grey[300]!),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        flex: 1,
+                        child: Text(
+                          '序号',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                            fontFamily: 'FZXBYS',
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        flex: 3,
+                        child: Text(
+                          '内容',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                            fontFamily: 'FZXBYS',
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        flex: 2,
+                        child: Text(
+                          '操作',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
+                            fontFamily: 'FZXBYS',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // 表格内容 - 空状态
+                Container(
+                  padding: EdgeInsets.symmetric(vertical: 40, horizontal: 16),
+                  child: Center(
+                    child: Text(
+                      '空',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Colors.grey[600],
+                        fontFamily: 'FZXBYS',
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          SizedBox(height: 16),
+
+          // 操作按钮
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              ElevatedButton(
+                onPressed: () {
+                  // 添加内容功能
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red[700],
+                  foregroundColor: Colors.white,
+                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                ),
+                child: Text('添加内容'),
+              ),
+              SizedBox(width: 12),
+              OutlinedButton(
+                onPressed: () {
+                  // 刷新功能
+                },
+                style: OutlinedButton.styleFrom(
+                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                  side: BorderSide(color: Colors.grey[400]!),
+                ),
+                child: Text('刷新'),
+              ),
+            ],
+          ),
+        ],
       ),
     );
+  }
+
+  // 会议管理内容（原有的功能按钮区域）
+  Widget _buildMeetingManagementContent() {
+    return Container(
+      height: 230, // 适当的高度，容纳两行按钮
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        children: [
+          // 第一行：开始、结束、退出
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _buildFunctionButton(
+                '开始',
+                Icons.play_arrow,
+                color: Colors.white,
+                onTap: () {
+                  // 开始按钮点击事件
+                  print('开始按钮被点击');
+                  // 这里添加开始会议的具体逻辑
+                },
+              ),
+              _buildFunctionButton(
+                '结束',
+                Icons.power_settings_new,
+                color: Colors.white,
+                onTap: () {
+                  // 结束按钮点击事件
+                  print('结束按钮被点击');
+                  // 这里添加结束会议的具体逻辑
+                },
+              ),
+              _buildFunctionButton(
+                '退出',
+                Icons.exit_to_app,
+                color: Colors.white,
+                onTap: () {
+                  // 退出按钮点击事件
+                  print('退出按钮被点击');
+                  Navigator.pop(context);
+                },
+              ),
+            ],
+          ),
+          // 第二行：数据上报、数据检查、文件选取
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _buildFunctionButton(
+                '数据上报',
+                Icons.cloud_upload,
+                color: Colors.white,
+                onTap: () {
+                  // 数据上报按钮点击事件
+                  print('数据上报按钮被点击');
+                  // 这里添加数据上报的具体逻辑
+                },
+              ),
+              _buildFunctionButton(
+                '数据检查',
+                Icons.search,
+                color: Colors.white,
+                onTap: () {
+                  // 数据检查按钮点击事件
+                  print('数据检查按钮被点击');
+                  // 这里添加数据检查的具体逻辑
+                },
+              ),
+              _buildFunctionButton(
+                '文件选取',
+                Icons.folder,
+                color: Colors.white,
+                onTap: () {
+                  // 文件选取按钮点击事件
+                  print('文件选取按钮被点击');
+                  // 这里添加文件选取的具体逻辑
+                },
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 修改函数签名，添加onTap参数
+  Widget _buildFunctionButton(
+    String title,
+    IconData icon, {
+    Color? color,
+    VoidCallback? onTap,
+  }) {
+    // 根据文字长度调整字体大小
+    double fontSize = title.length >= 4 ? 20 : 24;
+
+    return SizedBox(
+      width: 140,
+      height: 90,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap, // 使用传入的onTap回调
+          child: Container(
+            decoration: BoxDecoration(
+              color: color ?? Colors.red,
+              borderRadius: BorderRadius.circular(4),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.2),
+                  blurRadius: 2,
+                  offset: Offset(0, 1),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 48, color: HexColor('#A30014')), // 图标颜色保持红色
+                SizedBox(height: 2),
+                Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: fontSize,
+                    fontFamily: 'FZXBYS',
+                    fontWeight: FontWeight.bold,
+                    color: HexColor('#A30014'), // 文字颜色保持红色
+                  ),
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 显示管理按钮
+  Widget _buildDisplayButton(String title, IconData icon) {
+    return ElevatedButton.icon(
+      onPressed: () {
+        // 按钮点击功能
+        _handleDisplayButtonClick(title);
+      },
+      icon: Icon(icon, size: 20),
+      label: Text(title),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: HexColor('#A30014'),
+        foregroundColor: Colors.white,
+        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        textStyle: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+
+  // 处理显示管理按钮点击
+  void _handleDisplayButtonClick(String buttonType) {
+    switch (buttonType) {
+      case '会标':
+        // 处理会标显示逻辑
+        print('会标按钮被点击');
+        break;
+      case '报到情况':
+        // 处理报到情况显示逻辑
+        print('报到情况按钮被点击');
+        break;
+      case '标语':
+        // 处理标语显示逻辑
+        print('标语按钮被点击');
+        break;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.meetingName),
-        backgroundColor: Colors.red[700],
-      ),
       body: Column(
         children: [
           // 顶部宽幅图片
@@ -584,8 +911,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                       padding: const EdgeInsets.symmetric(vertical: 1),
                       child: Center(
                         child: Text(
-                          '第一次全体代表大会',
+                          '滨海市全国人民代表大会—第一次全体代表大会',
                           style: TextStyle(
+                            fontFamily: 'FZXBYS',
                             fontSize: 28,
                             fontWeight: FontWeight.bold,
                             color: Color.fromARGB(255, 237, 252, 32),
@@ -634,12 +962,26 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                     ),
                                     child: TabBar(
                                       controller: _tabController,
-                                      labelColor: Colors.red[700],
+                                      labelColor: HexColor('#A30014'),
                                       unselectedLabelColor: Colors.grey,
-                                      indicatorColor: Colors.red[700],
+                                      indicatorColor: HexColor('#A30014'),
                                       tabs: [
-                                        Tab(text: '报到情况'),
-                                        Tab(text: '设备点位图'),
+                                        Tab(
+                                          child: Text(
+                                            '报到情况',
+                                            style: TextStyle(
+                                              fontFamily: 'FZXBYS',
+                                            ),
+                                          ),
+                                        ),
+                                        Tab(
+                                          child: Text(
+                                            '设备点位图',
+                                            style: TextStyle(
+                                              fontFamily: 'FZXBYS',
+                                            ),
+                                          ),
+                                        ),
                                       ],
                                     ),
                                   ),
@@ -661,75 +1003,143 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                           SizedBox(width: 12),
 
                           // 右侧控制面板
+                          // 替换右侧控制面板的代码
+                          // 替换原有的右侧控制面板代码
                           Container(
-                            width: 700,
+                            width: 600,
                             child: Column(
                               children: [
+                                // 标签切换卡片
                                 Card(
                                   shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(8),
                                   ),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(12),
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          '会议管理',
-                                          style: TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.green[800],
-                                          ),
+                                  child: Column(
+                                    children: [
+                                      // 标签栏
+                                      Container(
+                                        padding: EdgeInsets.symmetric(
+                                          horizontal: 12,
                                         ),
-                                        SizedBox(height: 12),
-                                        GridView.count(
-                                          shrinkWrap: true,
-                                          crossAxisCount: 3,
-                                          crossAxisSpacing: 6,
-                                          mainAxisSpacing: 6,
-                                          childAspectRatio: 1.2,
-                                          physics:
-                                              NeverScrollableScrollPhysics(),
+                                        child: Row(
                                           children: [
-                                            _buildFunctionButton(
-                                              '开始',
-                                              Icons.play_arrow,
-                                              color: Colors.red,
+                                            // 会议管理标签（可点击）
+                                            Expanded(
+                                              child: GestureDetector(
+                                                onTap: () => setState(
+                                                  () =>
+                                                      _isMeetingManagementSelected =
+                                                          true,
+                                                ),
+                                                child: Container(
+                                                  decoration: BoxDecoration(
+                                                    border: Border(
+                                                      bottom: BorderSide(
+                                                        color:
+                                                            _isMeetingManagementSelected
+                                                            ? HexColor(
+                                                                '#A30014',
+                                                              )!
+                                                            : HexColor(
+                                                                '#A30014',
+                                                              ),
+                                                        width:
+                                                            _isMeetingManagementSelected
+                                                            ? 3
+                                                            : 1,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  child: Padding(
+                                                    padding:
+                                                        EdgeInsets.symmetric(
+                                                          vertical: 12,
+                                                        ),
+                                                    child: Text(
+                                                      '会议管理',
+                                                      style: TextStyle(
+                                                        fontSize: 16,
+                                                        fontFamily: 'FZXBYS',
+                                                        fontWeight:
+                                                            _isMeetingManagementSelected
+                                                            ? FontWeight.bold
+                                                            : FontWeight.normal,
+                                                        color:
+                                                            _isMeetingManagementSelected
+                                                            ? Colors.red[700]
+                                                            : Colors.grey[600],
+                                                      ),
+                                                      textAlign:
+                                                          TextAlign.center,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
                                             ),
-                                            _buildFunctionButton(
-                                              '结束',
-                                              Icons.power_settings_new,
-                                              color: Colors.red,
-                                            ),
-                                            _buildFunctionButton(
-                                              '退出',
-                                              Icons.exit_to_app,
-                                              color: Colors.red,
-                                            ),
-                                            _buildFunctionButton(
-                                              '数据上报',
-                                              Icons.cloud_upload,
-                                              color: Colors.orange,
-                                            ),
-                                            _buildFunctionButton(
-                                              '数据检查',
-                                              Icons.search,
-                                              color: Colors.green,
-                                            ),
-                                            _buildFunctionButton(
-                                              '文件选取',
-                                              Icons.folder,
-                                              color: Colors.blue,
+                                            // 显示管理标签（可点击）
+                                            Expanded(
+                                              child: GestureDetector(
+                                                onTap: () => setState(
+                                                  () =>
+                                                      _isMeetingManagementSelected =
+                                                          false,
+                                                ),
+                                                child: Container(
+                                                  decoration: BoxDecoration(
+                                                    border: Border(
+                                                      bottom: BorderSide(
+                                                        color:
+                                                            !_isMeetingManagementSelected
+                                                            ? Colors.red[700]!
+                                                            : Colors.grey[300]!,
+                                                        width:
+                                                            !_isMeetingManagementSelected
+                                                            ? 3
+                                                            : 1,
+                                                      ),
+                                                    ),
+                                                  ),
+                                                  child: Padding(
+                                                    padding:
+                                                        EdgeInsets.symmetric(
+                                                          vertical: 12,
+                                                        ),
+                                                    child: Text(
+                                                      '显示管理',
+                                                      style: TextStyle(
+                                                        fontSize: 16,
+                                                        fontFamily: 'FZXBYS',
+                                                        fontWeight:
+                                                            !_isMeetingManagementSelected
+                                                            ? FontWeight.bold
+                                                            : FontWeight.normal,
+                                                        color:
+                                                            !_isMeetingManagementSelected
+                                                            ? Colors.red[700]
+                                                            : Colors.grey[600],
+                                                      ),
+                                                      textAlign:
+                                                          TextAlign.center,
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
                                             ),
                                           ],
                                         ),
-                                      ],
-                                    ),
+                                      ),
+
+                                      // 动态内容区域
+                                      _isMeetingManagementSelected
+                                          ? _buildMeetingManagementContent()
+                                          : _buildDisplayManagementContent(),
+                                    ],
                                   ),
                                 ),
-                                SizedBox(height: 12),
+
+                                SizedBox(height: 3),
+
+                                // 通知信息区域（保持不变）
                                 Expanded(
                                   child: Card(
                                     shape: RoundedRectangleBorder(
@@ -745,6 +1155,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                             '通知信息',
                                             style: TextStyle(
                                               fontSize: 16,
+                                              fontFamily: 'FZXBYS',
                                               fontWeight: FontWeight.bold,
                                             ),
                                           ),
@@ -760,9 +1171,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                               padding: const EdgeInsets.all(8),
                                               child: SingleChildScrollView(
                                                 child: Text(
-                                                  '这里显示通知信息。\n\n示例：会议将在 10 分钟后开始，请相关人员就位。\n\n注意事项：\n• 请提前15分钟入场\n• 携带有效证件\n• 保持会场安静',
+                                                  '这里显示通知信息',
                                                   style: TextStyle(
                                                     fontSize: 14,
+                                                    fontFamily: 'FZXBYS',
                                                   ),
                                                 ),
                                               ),
