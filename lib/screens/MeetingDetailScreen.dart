@@ -1,5 +1,50 @@
+import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:hexcolor/hexcolor.dart';
+import 'package:file_picker/file_picker.dart';
+import '../scc/scc_client.dart';
+
+// 设备节点数据模型
+class DeviceNode {
+  final String id;
+  final String stationName;
+  final String? ip;
+  final String? nodeID;
+  final List<DeviceNode> children;
+  final String? processType;
+  final int? clientStatus;
+  final String? facilityTypeName;
+  int? attendNum;
+  int? specialNum;
+
+  DeviceNode({
+    required this.id,
+    required this.stationName,
+    this.ip,
+    this.nodeID,
+    this.children = const [],
+    this.processType,
+    this.clientStatus,
+    this.facilityTypeName,
+    this.attendNum,
+    this.specialNum,
+  });
+
+  factory DeviceNode.fromJson(Map<String, dynamic> json) {
+    return DeviceNode(
+      id: json['NodeID'] ?? json['id'] ?? '',
+      stationName: json['StationName'] ?? json['stationName'] ?? '',
+      ip: json['IP'] ?? json['ip'],
+      nodeID: json['NodeID'] ?? json['nodeID'],
+      processType: json['ProcessType'] ?? json['processType'],
+      clientStatus: json['ClientStatus'] ?? json['clientStatus'],
+      facilityTypeName: json['FacilityTypeName'] ?? json['facilityTypeName'],
+      attendNum: json['AttendNum'] ?? json['attendNum'],
+      specialNum: json['SpecialNum'] ?? json['specialNum'],
+    );
+  }
+}
 
 class MeetingDetailScreen extends StatefulWidget {
   final String meetingName;
@@ -16,32 +61,832 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   late TabController _tabController;
   bool _isMeetingManagementSelected = true;
 
-  // 统计数据 - 完全按照图片中的数值
-  final Map<String, int> attendStats = {
-    '应到': 2200,
-    '实到': 2150,
-    '未到': 50,
+  // 会议信息
+  String _meetingTitle = '';
+  int _meetStatus = 0; // 0: 未开始, 1: 进行中, 2: 已结束
+  bool _canStart = true; // 是否可以开始会议
+
+  // 统计数据
+  Map<String, int> attendStats = {
+    '应到': 0,
+    '实到': 0,
+    '未到': 0,
     '请假': 0,
-    '实缺': 50,
+    '实缺': 0,
   };
-  final Map<String, int> guestStats = {
-    '应到': 2200,
-    '实到': 2150,
-    '未到': 50,
+  Map<String, int> guestStats = {
+    '应到': 0,
+    '实到': 0,
+    '未到': 0,
     '请假': 0,
-    '实缺': 50,
+    '实缺': 0,
   };
+
+  // 设备列表
+  List<DeviceNode> _deviceTree = [];
+  List<DeviceNode> _clientList = [];
+  List<Map<String, dynamic>> _stationNums = []; // 站点人数统计
+  Set<String> _selectedDeviceIds = {}; // 选中的设备ID
+
+  // 通知信息
+  String _notificationMessage = '';
+
+  // 定时器用于轮询数据
+  Timer? _meetInfoTimer;
+  Timer? _clientTimer;
+  Timer? _stationNumTimer;
+
+  // 数据检查相关
+  List<String> _checkList = []; // 选中的表
+  List<Map<String, dynamic>> _checkResultList = []; // 检查结果
+  bool _isChecking = false;
+  Timer? _checkTimer;
+
+  // 标语相关
+  List<Map<String, dynamic>> _sloganList = [];
+  int _selectedSloganIndex = -1;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _meetingTitle = widget.meetingName;
+    _loadMeetingInfo();
+    _loadClientList();
+    _startPolling();
+    // U盘检测改为按需检测，只在点击文件选取按钮时才检测
   }
 
   @override
   void dispose() {
     _tabController.dispose();
+    _meetInfoTimer?.cancel();
+    _clientTimer?.cancel();
+    _stationNumTimer?.cancel();
+    _checkTimer?.cancel();
     super.dispose();
+  }
+
+  // 加载会议信息
+  Future<void> _loadMeetingInfo() async {
+    if (widget.meetId == null || widget.meetId!.isEmpty) return;
+    
+    final result = await SccClientWrapper.queryMeetInfo(widget.meetId!);
+    if (result.isSuccess && result.data != null) {
+      final data = result.data!;
+      setState(() {
+        // 解析会议标题
+        if (data['onMeet'] != null && data['onMeet']['Content'] != null) {
+          _meetingTitle = data['onMeet']['Content'].toString().replaceAll('@', '-');
+        }
+        
+        // 解析会议状态
+        if (data['serverStatus'] != null && data['serverStatus']['Meetstatus'] != null) {
+          _meetStatus = data['serverStatus']['Meetstatus'] as int;
+          _canStart = _meetStatus != 1; // 会议未开始时可以开始
+        }
+        
+        // 解析统计数据
+        if (data['nums'] != null) {
+          final nums = data['nums'] as Map<String, dynamic>;
+          _updateStats(nums);
+        }
+      });
+    }
+  }
+
+  // 加载客户端列表
+  Future<void> _loadClientList() async {
+    final result = await SccClientWrapper.queryClient();
+    
+    if (result.isSuccess && result.data != null) {
+      final clientData = result.data as List<dynamic>;
+      
+      final List<DeviceNode> clients = [];
+      
+      for (var item in clientData) {
+        final jsonItem = item as Map<String, dynamic>;
+        final node = DeviceNode.fromJson(jsonItem);
+        
+        // 从返回的数据中提取人数信息（如果存在）
+        if (jsonItem['AttendNum'] != null || jsonItem['SpecialNum'] != null) {
+          final stationInfo = {
+            'Station': node.ip,
+            'AttendNum': jsonItem['AttendNum'] ?? 0,
+            'SpecialNum': jsonItem['SpecialNum'] ?? 0,
+          };
+          // 更新站点人数列表
+          final existingIndex = _stationNums.indexWhere((s) => s['Station'] == node.ip);
+          if (existingIndex >= 0) {
+            _stationNums[existingIndex] = stationInfo;
+          } else {
+            _stationNums.add(stationInfo);
+          }
+        }
+        
+        clients.add(node);
+      }
+      
+      setState(() {
+        _clientList = clients;
+        _updateDeviceTree();
+      });
+    }
+  }
+
+  // 开始轮询数据
+  void _startPolling() {
+    // 轮询会议信息（每2秒）
+    _meetInfoTimer?.cancel();
+    _meetInfoTimer = Timer.periodic(Duration(seconds: 2), (timer) {
+      if (widget.meetId != null && widget.meetId!.isNotEmpty) {
+        _loadMeetingInfo();
+      }
+    });
+    
+    // 轮询客户端列表（每3秒）
+    _clientTimer?.cancel();
+    _clientTimer = Timer.periodic(Duration(seconds: 3), (timer) {
+      _loadClientList();
+    });
+    
+    // 轮询站点人数（每2秒）
+    _stationNumTimer?.cancel();
+    _stationNumTimer = Timer.periodic(Duration(seconds: 2), (timer) {
+      _loadStationNums();
+    });
+  }
+
+  // 加载站点人数（如果需要单独的接口）
+  Future<void> _loadStationNums() async {
+    // 站点人数信息通常已经包含在 queryClient 或 queryMeetInfo 的返回数据中
+    // 如果需要单独的接口来获取站点人数，可以在这里实现
+    // 目前人数信息已经在 _loadClientList 中处理
+  }
+
+
+  // 获取可移动驱动器列表（跨平台：Windows/Linux/macOS）
+  Future<List<String>> _getRemovableDrives() async {
+    final removableDrives = <String>[];
+    
+    try {
+      if (Platform.isWindows) {
+        // Windows系统：从E:到Z:检测可移动驱动器（跳过C:和D:）
+        for (var letter in 'EFGHIJKLMNOPQRSTUVWXYZ'.codeUnits) {
+          final drive = '${String.fromCharCode(letter)}:\\';
+          final driveDir = Directory(drive);
+          
+          if (await driveDir.exists()) {
+            try {
+              // 尝试读取目录，如果成功，可能是可移动驱动器
+              await driveDir.list().first.timeout(Duration(milliseconds: 100));
+              removableDrives.add(drive);
+            } catch (e) {
+              // 如果无法访问，跳过
+              continue;
+            }
+          }
+        }
+      } else if (Platform.isLinux) {
+        // Linux系统：检测常见的U盘挂载点
+        final mountPaths = [
+          '/media/${Platform.environment['USER'] ?? 'user'}',
+          '/run/media/${Platform.environment['USER'] ?? 'user'}',
+          '/mnt',
+        ];
+        
+        for (var mountPath in mountPaths) {
+          final mountDir = Directory(mountPath);
+          if (await mountDir.exists()) {
+            try {
+              // 列出挂载目录下的所有子目录
+              await for (var entity in mountDir.list()) {
+                if (entity is Directory) {
+                  try {
+                    // 尝试访问，如果能访问且不是系统目录，可能是U盘
+                    await entity.list().first.timeout(Duration(milliseconds: 100));
+                    final path = entity.path;
+                    // 排除隐藏目录和系统目录
+                    if (!path.split('/').last.startsWith('.')) {
+                      removableDrives.add(path);
+                    }
+                  } catch (e) {
+                    // 无法访问，跳过
+                    continue;
+                  }
+                }
+              }
+            } catch (e) {
+              // 目录读取失败，跳过
+              continue;
+            }
+          }
+        }
+        
+        // 如果没有找到，也尝试直接检测 /media 下的所有用户目录
+        final mediaDir = Directory('/media');
+        if (await mediaDir.exists()) {
+          try {
+            await for (var userDir in mediaDir.list()) {
+              if (userDir is Directory) {
+                try {
+                  await for (var device in userDir.list()) {
+                    if (device is Directory) {
+                      try {
+                        await device.list().first.timeout(Duration(milliseconds: 100));
+                        removableDrives.add(device.path);
+                      } catch (e) {
+                        continue;
+                      }
+                    }
+                  }
+                } catch (e) {
+                  continue;
+                }
+              }
+            }
+          } catch (e) {
+            // 忽略错误
+          }
+        }
+      } else if (Platform.isMacOS) {
+        // macOS系统：检测 /Volumes 目录下的挂载点
+        final volumesDir = Directory('/Volumes');
+        if (await volumesDir.exists()) {
+          try {
+            await for (var entity in volumesDir.list()) {
+              if (entity is Directory) {
+                try {
+                  // 排除系统卷（通常是 macOS、Macintosh HD 等）
+                  final name = entity.path.split('/').last;
+                  if (name != 'Macintosh HD' && !name.startsWith('.')) {
+                    await entity.list().first.timeout(Duration(milliseconds: 100));
+                    removableDrives.add(entity.path);
+                  }
+                } catch (e) {
+                  continue;
+                }
+              }
+            }
+          } catch (e) {
+            // 忽略错误
+          }
+        }
+      }
+      
+      // 去重
+      return removableDrives.toSet().toList();
+    } catch (e) {
+      return removableDrives;
+    }
+  }
+
+  // 查找并上传第一个txt文件
+  Future<File?> _findFirstTxtFile(Directory dir) async {
+    try {
+      final files = dir.listSync(recursive: false);
+      
+      for (var entity in files) {
+        if (entity is File) {
+          final fileName = entity.path.split(Platform.pathSeparator).last.toLowerCase();
+          
+          // 检查是否是txt文件
+          if (fileName.endsWith('.txt')) {
+            return entity;
+          }
+        }
+      }
+    } catch (e) {
+    }
+    return null;
+  }
+
+  // 上传文件
+  Future<void> _uploadFile(File file) async {
+    try {
+      final fileData = await file.readAsBytes();
+      final fileName = file.path.split(Platform.pathSeparator).last;
+      
+      final uploadResult = await SccClientWrapper.importRecord(fileData);
+      if (uploadResult.isSuccess) {
+        setState(() {
+          _notificationMessage = '文件上传成功: $fileName - ${DateTime.now().toString().substring(0, 19)}';
+        });
+        _showMessage('文件上传成功: $fileName');
+      } else {
+        setState(() {
+          _notificationMessage = '文件上传失败: $fileName - ${uploadResult.msg}';
+        });
+        _showMessage('文件上传失败: ${uploadResult.msg}', isError: true);
+      }
+    } catch (e) {
+      _showMessage('读取文件失败: $e', isError: true);
+    }
+  }
+
+  // 更新设备树
+  void _updateDeviceTree() {
+    final List<DeviceNode> frontEndDevices = [];
+    final List<DeviceNode> centerDevices = [];
+    
+    for (var node in _clientList) {
+      if (node.facilityTypeName == '报到终端') {
+        if (node.ip != null && node.ip!.contains('1030')) {
+          // 地垫设备
+          final didianNode = DeviceNode(
+            id: node.id,
+            stationName: node.stationName,
+            ip: node.ip,
+            nodeID: node.nodeID,
+            processType: 'didian',
+            clientStatus: node.clientStatus,
+            facilityTypeName: node.facilityTypeName,
+            attendNum: _getAttendNum(node.ip),
+            specialNum: _getSpecialNum(node.ip),
+          );
+          frontEndDevices.add(didianNode);
+        } else {
+          // 客户端设备
+          final clientNode = DeviceNode(
+            id: node.id,
+            stationName: node.stationName,
+            ip: node.ip,
+            nodeID: node.nodeID,
+            processType: 'Client',
+            clientStatus: node.clientStatus,
+            facilityTypeName: node.facilityTypeName,
+            attendNum: _getAttendNum(node.ip),
+            specialNum: _getSpecialNum(node.ip),
+          );
+          frontEndDevices.add(clientNode);
+        }
+      } else if (node.facilityTypeName != null) {
+        // 服务器设备或其他类型（可能是机架设备）
+        // 判断是否是机架设备：根据 facilityTypeName 或其他特征
+        String processType = 'Server';
+        if (node.facilityTypeName!.contains('机架') || 
+            node.facilityTypeName!.contains('会议厅') ||
+            node.stationName.contains('厅')) {
+          processType = 'rack';
+        }
+        
+        final serverNode = DeviceNode(
+          id: node.id,
+          stationName: node.stationName,
+          ip: node.ip,
+          nodeID: node.nodeID,
+          processType: processType,
+          clientStatus: node.clientStatus,
+          facilityTypeName: node.facilityTypeName,
+          attendNum: _getAttendNum(node.ip),
+          specialNum: _getSpecialNum(node.ip),
+        );
+        
+        if (processType == 'rack') {
+          frontEndDevices.add(serverNode);
+        } else {
+          centerDevices.add(serverNode);
+        }
+      } else {
+        // 默认作为服务器设备
+        final serverNode = DeviceNode(
+          id: node.id,
+          stationName: node.stationName,
+          ip: node.ip,
+          nodeID: node.nodeID,
+          processType: 'Server',
+          clientStatus: node.clientStatus,
+          facilityTypeName: node.facilityTypeName,
+          attendNum: _getAttendNum(node.ip),
+          specialNum: _getSpecialNum(node.ip),
+        );
+        centerDevices.add(serverNode);
+      }
+    }
+    
+    _deviceTree = [
+      DeviceNode(
+        id: '1',
+        stationName: '前端设备',
+        children: frontEndDevices,
+      ),
+      DeviceNode(
+        id: '2',
+        stationName: '中心管理端',
+        children: centerDevices,
+      ),
+    ];
+  }
+
+  // 获取出席人数
+  int _getAttendNum(String? ip) {
+    if (ip == null) return 0;
+    for (var station in _stationNums) {
+      if (station['Station'] == ip) {
+        return station['AttendNum'] ?? 0;
+      }
+    }
+    return 0;
+  }
+
+  // 获取列席人数
+  int _getSpecialNum(String? ip) {
+    if (ip == null) return 0;
+    for (var station in _stationNums) {
+      if (station['Station'] == ip) {
+        return station['SpecialNum'] ?? 0;
+      }
+    }
+    return 0;
+  }
+
+  // 更新客户端状态
+  void _updateClientStatus(String nodeID, int newStatus) {
+    _clientList = _clientList.map((node) {
+      if (node.nodeID == nodeID) {
+        return DeviceNode(
+          id: node.id,
+          stationName: node.stationName,
+          ip: node.ip,
+          nodeID: node.nodeID,
+          processType: node.processType,
+          clientStatus: newStatus,
+          facilityTypeName: node.facilityTypeName,
+        );
+      }
+      return node;
+    }).toList();
+  }
+
+  // 更新统计数据
+  void _updateStats(Map<String, dynamic> nums) {
+    final personNum = nums['Personnum'] ?? 0;
+    final personAttendanceNum = nums['Personattendancenum'] ?? 0;
+    final personLeaveNum = nums['Personleavenum'] ?? 0;
+    final notYet = personNum - personAttendanceNum;
+    final realDeficit = personNum - personAttendanceNum - personLeaveNum;
+    
+    attendStats = {
+      '应到': personNum,
+      '实到': personAttendanceNum,
+      '未到': notYet,
+      '请假': personLeaveNum,
+      '实缺': realDeficit,
+    };
+    
+    final specialNum = nums['Specialnum'] ?? 0;
+    final specialAttendanceNum = nums['Specialnattendancenum'] ?? 0;
+    final specialLeaveNum = nums['Specialleavenum'] ?? 0;
+    final specialNotYet = specialNum - specialAttendanceNum;
+    final specialRealDeficit = specialNum - specialAttendanceNum - specialLeaveNum;
+    
+    guestStats = {
+      '应到': specialNum,
+      '实到': specialAttendanceNum,
+      '未到': specialNotYet,
+      '请假': specialLeaveNum,
+      '实缺': specialRealDeficit,
+    };
+  }
+
+
+  // 开始会议
+  Future<void> _startMeeting() async {
+    if (widget.meetId == null || widget.meetId!.isEmpty) {
+      _showMessage('会议ID为空', isError: true);
+      return;
+    }
+    
+    final result = await SccClientWrapper.startMeet(widget.meetId!);
+    if (result.isSuccess) {
+      setState(() {
+        _canStart = false;
+        _meetStatus = 1;
+      });
+      _showMessage('$_meetingTitle 会议即将开始');
+    } else {
+      _showMessage(result.msg, isError: true);
+    }
+  }
+
+  // 结束会议
+  Future<void> _endMeeting() async {
+    if (widget.meetId == null || widget.meetId!.isEmpty) {
+      _showMessage('会议ID为空', isError: true);
+      return;
+    }
+    
+    final result = await SccClientWrapper.endMeet(widget.meetId!);
+    if (result.isSuccess) {
+      setState(() {
+        _canStart = true;
+        _meetStatus = 2;
+      });
+      _showMessage('$_meetingTitle 会议即将结束', isError: true);
+    } else {
+      _showMessage(result.msg, isError: true);
+    }
+  }
+
+  // 数据上报（不再显示选择对话框，因为已经在外部选择了）
+  Future<void> _reportData() async {
+    if (_selectedDeviceIds.isEmpty) {
+      _showMessage('请选择客户端', isError: true);
+      return;
+    }
+    
+    if (widget.meetId == null || widget.meetId!.isEmpty) {
+      _showMessage('会议ID为空', isError: true);
+      return;
+    }
+    
+    // 获取选中设备的IP
+    final List<String> selectedIPs = [];
+    for (var node in _clientList) {
+      if (_selectedDeviceIds.contains(node.nodeID) && node.ip != null) {
+        selectedIPs.add(node.ip!);
+      }
+    }
+    
+    if (selectedIPs.isEmpty) {
+      _showMessage('所选设备没有IP地址', isError: true);
+      return;
+    }
+    
+    final stations = selectedIPs.join(',');
+    final result = await SccClientWrapper.reportCheckInFailed(
+      meetID: widget.meetId!,
+      stations: stations,
+    );
+    
+    if (result.isSuccess) {
+      _showMessage('上报成功');
+      setState(() {
+        _notificationMessage = '数据上报成功: ${DateTime.now().toString().substring(0, 19)}';
+      });
+    } else {
+      _showMessage(result.msg, isError: true);
+    }
+  }
+
+  // 数据检查（自动检查端口号是8084的前端设备）
+  Future<void> _showDataCheckDialog() async {
+    // 检查是否有端口号是8084的前端设备
+    final List<DeviceNode> frontEndDevices = [];
+    for (var root in _deviceTree) {
+      if (root.stationName == '前端设备') {
+        frontEndDevices.addAll(root.children);
+      }
+    }
+    
+    final List<String> devicesWithPort8084 = [];
+    for (var node in frontEndDevices) {
+      if (node.ip != null && node.ip!.contains(':8084')) {
+        devicesWithPort8084.add(node.stationName);
+      }
+    }
+    
+    if (devicesWithPort8084.isEmpty) {
+      _showMessage('未找到端口号为8084的前端设备', isError: true);
+      return;
+    }
+    
+    final checkList = <String>[];
+    
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('请选择需要校验的数据库表'),
+        content: StatefulBuilder(
+          builder: (context, setState) {
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CheckboxListTile(
+                  title: Text('会议表'),
+                  value: checkList.contains('meet'),
+                  onChanged: (value) {
+                    setState(() {
+                      if (value == true) {
+                        checkList.add('meet');
+                      } else {
+                        checkList.remove('meet');
+                      }
+                    });
+                  },
+                ),
+                CheckboxListTile(
+                  title: Text('代表表'),
+                  value: checkList.contains('delegateregister'),
+                  onChanged: (value) {
+                    setState(() {
+                      if (value == true) {
+                        checkList.add('delegateregister');
+                      } else {
+                        checkList.remove('delegateregister');
+                      }
+                    });
+                  },
+                ),
+                CheckboxListTile(
+                  title: Text('人员基础信息表'),
+                  value: checkList.contains('personinformation'),
+                  onChanged: (value) {
+                    setState(() {
+                      if (value == true) {
+                        checkList.add('personinformation');
+                      } else {
+                        checkList.remove('personinformation');
+                      }
+                    });
+                  },
+                ),
+              ],
+            );
+          },
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('确定'),
+          ),
+        ],
+      ),
+    );
+    
+    if (result == true && checkList.isNotEmpty) {
+      _performDataCheck(checkList);
+    }
+  }
+
+  // 执行数据检查（只检查端口号是8084的前端设备）
+  Future<void> _performDataCheck(List<String> tables) async {
+    if (widget.meetId == null || widget.meetId!.isEmpty) {
+      _showMessage('会议ID为空', isError: true);
+      return;
+    }
+    
+    // 获取前端设备（只检查前端设备，不检查中心管理端）
+    final List<DeviceNode> frontEndDevices = [];
+    for (var root in _deviceTree) {
+      if (root.stationName == '前端设备') {
+        frontEndDevices.addAll(root.children);
+      }
+    }
+    
+    // 过滤出端口号是8084的前端设备
+    final List<String> selectedIPs = [];
+    for (var node in frontEndDevices) {
+      if (node.ip != null) {
+        // 检查IP地址格式，可能是 "ip:port" 或只有IP
+        final ip = node.ip!;
+        
+        // 如果包含端口号
+        if (ip.contains(':')) {
+          final parts = ip.split(':');
+          if (parts.length >= 2) {
+            final port = parts.last;
+            // 只选择端口号是8084的设备
+            if (port == '8084') {
+              selectedIPs.add(ip);
+            }
+          }
+        } else {
+          // 如果没有端口号，可能需要根据其他条件判断
+          // 这里先不处理，只处理有端口号的情况
+        }
+      }
+    }
+    
+    if (selectedIPs.isEmpty) {
+      _showMessage('未找到端口号为8084的前端设备', isError: true);
+      return;
+    }
+    
+    final stations = selectedIPs.join(',');
+    final tablesStr = tables.join(',');
+    
+    // 先结束之前的检查
+    await SccClientWrapper.endDatabaseCheck();
+    
+    final result = await SccClientWrapper.databaseCheck(
+      meetID: widget.meetId!,
+      stations: stations,
+      tables: tablesStr,
+    );
+    
+    print('数据检查返回: code=${result.code}, msg=${result.msg}, data=${result.data}');
+    
+    if (result.isSuccess) {
+      _showMessage('开始校验');
+      setState(() {
+        _isChecking = true;
+        _checkResultList = [];
+      });
+      
+      // 定时检查结果
+      _checkTimer?.cancel();
+      _checkTimer = Timer.periodic(Duration(seconds: 1), (timer) {
+        _pollCheckResult();
+      });
+    } else {
+      _showMessage(result.msg, isError: true);
+    }
+  }
+
+  // 轮询检查结果（只检查端口号是8084的前端设备）
+  void _pollCheckResult() {
+    // 获取前端设备中端口号是8084的设备
+    final List<DeviceNode> frontEndDevices = [];
+    for (var root in _deviceTree) {
+      if (root.stationName == '前端设备') {
+        frontEndDevices.addAll(root.children);
+      }
+    }
+    
+    final checkData = frontEndDevices.where((node) {
+      if (node.ip == null) return false;
+      // 只检查端口号是8084的设备
+      return node.ip!.contains(':8084') && node.clientStatus != 0;
+    }).toList();
+    
+    setState(() {
+      _checkResultList = [];
+      for (var node in checkData) {
+        // 这里需要从节点的 Remark 字段解析检查结果
+        // 暂时使用模拟数据
+        _checkResultList.add({
+          'StationName': node.stationName,
+          'Meet': 1,
+          'DelegateRegister': 1,
+          'PersonInformation': 1,
+          'PersonInformationPhoto': 1,
+        });
+      }
+      
+      // 如果所有检查完成
+      if (checkData.every((node) => node.clientStatus != 1)) {
+        _checkTimer?.cancel();
+        _isChecking = false;
+      }
+    });
+  }
+
+  // 文件选取：先检测U盘，有U盘自动读取txt，没有则打开文件选择器
+  Future<void> _pickAndUploadFile() async {
+    try {
+      // 先检测是否有U盘
+      final drives = await _getRemovableDrives();
+      
+      if (drives.isNotEmpty) {
+        // 检测到U盘，查找第一个txt文件
+        final usbPath = drives.first;
+        final driveDir = Directory(usbPath);
+        
+        if (await driveDir.exists()) {
+          final txtFile = await _findFirstTxtFile(driveDir);
+          
+          if (txtFile != null) {
+            // 找到txt文件，自动上传
+            _showMessage('检测到U盘，正在自动上传文件: ${txtFile.path.split(Platform.pathSeparator).last}');
+            await _uploadFile(txtFile);
+            return;
+          } else {
+            // U盘存在但没有txt文件
+            _showMessage('U盘中未找到txt文件，请选择文件', isError: true);
+            // 继续执行文件选择器
+          }
+        }
+      }
+      
+      // 没有检测到U盘，或者U盘中没有txt文件，打开文件选择器
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['txt'],
+      );
+      
+      if (result != null && result.files.single.path != null) {
+        final file = File(result.files.single.path!);
+        await _uploadFile(file);
+      }
+    } catch (e) {
+      _showMessage('文件选择失败: $e', isError: true);
+    }
+  }
+
+  // 显示消息
+  void _showMessage(String message, {bool isError = false}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: isError ? Colors.red : Colors.green,
+        duration: Duration(seconds: 2),
+      ),
+    );
   }
 
   // 完全按照图片样式重新设计统计卡片
@@ -162,288 +1007,261 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     );
   }
 
-  //设备列表
-  //设备列表
-  Widget _buildAttendList() {
-    // 模拟设备数据 - 根据图片中的状态和布局
-    final devices = [
-      {
-        'name': '01-北京厅',
-        'ProcessType': 'rack',
-        'status': '空闲',
-        'attend': 8,
-        'guest': 0,
-        'color': Colors.black54,
-      },
-      {
-        'name': '02-上海厅',
-        'ProcessType': 'rack',
-        'status': '结束',
-        'attend': 8,
-        'guest': 0,
-        'color': Colors.orange,
-      },
-      {
-        'name': '01-北京厅',
-        'ProcessType': 'rack',
-        'status': '工作',
-        'attend': 8,
-        'guest': 0,
-        'color': Colors.blue,
-      },
-      {
-        'name': '02-上海厅',
-        'ProcessType': 'rack',
-        'status': '结束',
-        'attend': 8,
-        'guest': 0,
-        'color': Colors.orange,
-      },
-      {
-        'name': '01-北京厅',
-        'ProcessType': 'rack',
-        'status': '工作',
-        'attend': 8,
-        'guest': 0,
-        'color': Colors.blue,
-      },
-      {
-        'name': '02-上海厅',
-        'ProcessType': 'rack',
-        'status': '结束',
-        'attend': 8,
-        'guest': 0,
-        'color': Colors.orange,
-      },
-      {
-        'name': '01-北京厅',
-        'ProcessType': 'rack',
-        'status': '空闲',
-        'attend': 8,
-        'guest': 0,
-        'color': Colors.black54,
-      },
-      {
-        'name': '02-上海厅',
-        'ProcessType': 'rack',
-        'status': '结束',
-        'attend': 8,
-        'guest': 0,
-        'color': Colors.orange,
-      },
-      {
-        'name': '01-北京厅',
-        'ProcessType': 'rack',
-        'status': '工作',
-        'attend': 8,
-        'guest': 0,
-        'color': Colors.blue,
-      },
-      {
-        'name': '02-上海厅',
-        'ProcessType': 'rack',
-        'status': '结束',
-        'attend': 8,
-        'guest': 0,
-        'color': Colors.orange,
-      },
-      {
-        'name': '01-北京厅',
-        'ProcessType': 'rack',
-        'status': '空闲',
-        'attend': 8,
-        'guest': 0,
-        'color': Colors.black54,
-      },
-      {
-        'name': '02-上海厅',
-        'ProcessType': 'rack',
-        'status': '结束',
-        'attend': 8,
-        'guest': 0,
-        'color': Colors.orange,
-      },
-      {
-        'name': '报到显示终端',
-        'ProcessType': 'Client',
-        'status': '工作',
-        'attend': 0,
-        'guest': 0,
-        'color': Colors.grey,
-      },
-      {
-        'name': '报到显示终端',
-        'ProcessType': 'Client',
-        'status': '联机',
-        'attend': 0,
-        'guest': 0,
-        'color': Colors.grey,
-      },
-      {
-        'name': '报到显示终端',
-        'ProcessType': 'Client',
-        'status': '脱机',
-        'attend': 0,
-        'guest': 0,
-        'color': Colors.grey,
-      },
-      {
-        'name': '报到显示终端',
-        'ProcessType': 'Client',
-        'status': '工作',
-        'attend': 0,
-        'guest': 0,
-        'color': Colors.grey,
-      },
-      {
-        'name': '报到显示终端',
-        'ProcessType': 'Client',
-        'status': '工作',
-        'attend': 0,
-        'guest': 0,
-        'color': Colors.grey,
-      },
-      {
-        'name': '地垫式报到设备',
-        'ProcessType': 'didian',
-        'status': '工作',
-        'attend': 0,
-        'guest': 0,
-        'color': Colors.grey,
-      },
-    ];
 
-    return GridView.builder(
-      padding: const EdgeInsets.all(10),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 7,
-        mainAxisSpacing: 10,
-        crossAxisSpacing: 10,
-        childAspectRatio: 0.8,
-      ),
-      itemCount: devices.length,
-      itemBuilder: (context, index) {
-        print(context);
-        final device = devices[index];
-        final String processType = device['ProcessType'] as String;
-        final bool isRack = processType == 'rack';
-        final String status = device['status'] as String; // 先定义status变量
-        final Color textColor = status == '工作'
-            ? Colors.black
-            : Colors.white; // 然后使用它
-        return Container(
-          decoration: BoxDecoration(
-            color: isRack ? Colors.grey[200] : Colors.white,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.grey.shade300, width: 1),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black12,
-                blurRadius: 1,
-                offset: Offset(0, 2),
+  //设备列表 - 按设备类型分组，每种类型一个大底图
+  Widget _buildAttendList() {
+    // 从 _clientList 和 _deviceTree 中获取所有设备
+    final List<DeviceNode> allDevices = [];
+    for (var root in _deviceTree) {
+      allDevices.addAll(root.children);
+    }
+    
+    // 按设备类型分组
+    final rackDevices = allDevices.where((d) => d.processType == 'rack').toList();
+    final clientDevices = allDevices.where((d) => d.processType == 'Client').toList();
+    final didianDevices = allDevices.where((d) => d.processType == 'didian').toList();
+    
+    // 如果没有设备，显示提示
+    if (allDevices.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.devices_other, size: 64, color: Colors.grey),
+            SizedBox(height: 16),
+            Text(
+              '暂无设备数据',
+              style: TextStyle(
+                fontSize: 18,
+                color: Colors.grey,
+                fontFamily: 'FZXBYS',
               ),
-            ],
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              // 状态指示器 - 使用图片展示
-              Container(
-                width: double.infinity,
-                height: 120,
-                decoration: BoxDecoration(
-                  image: DecorationImage(
-                    image: AssetImage(_getDeviceImage(processType)),
-                    fit: BoxFit.contain,
-                  ),
-                  borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(8),
-                    topRight: Radius.circular(8),
-                  ),
-                ),
-                child: Center(
-                  child: Transform.translate(
-                    // 根据设备类型调整矩形框位置
-                    offset: _getStatusOffset(processType),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: _getStatusBackgroundColor(
-                          device['status'] as String,
-                        ),
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.5),
-                          width: 1.5,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.3),
-                            offset: Offset(0, 2),
+            ),
+            SizedBox(height: 8),
+            Text(
+              '正在加载设备列表...',
+              style: TextStyle(
+                fontSize: 14,
+                color: Colors.grey[600],
+                fontFamily: 'FZXBYS',
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    
+    // 转换设备状态
+    String _getStatusText(int? status) {
+      switch (status) {
+        case 0:
+          return '空闲';
+        case 1:
+          return '联机';
+        case 2:
+          return '工作';
+        case 3:
+          return '结束';
+        case 4:
+          return '脱机';
+        case 5:
+          return '错卡';
+        case -2:
+          return '重报';
+        case -3:
+          return '报到';
+        default:
+          return '空闲';
+      }
+    }
+
+    return SingleChildScrollView(
+      padding: EdgeInsets.all(10),
+      child: Wrap(
+        spacing: 20,
+        runSpacing: 20,
+        children: [
+          // 机架设备区域
+          if (rackDevices.isNotEmpty)
+            _buildDeviceTypeArea('rack', rackDevices, _getStatusText),
+          // 客户端设备区域
+          if (clientDevices.isNotEmpty)
+            _buildDeviceTypeArea('Client', clientDevices, _getStatusText),
+          // 地垫设备区域
+          if (didianDevices.isNotEmpty)
+            _buildDeviceTypeArea('didian', didianDevices, _getStatusText),
+        ],
+      ),
+    );
+  }
+  
+  // 构建设备类型区域（一个大底图 + 多个状态矩形）
+  Widget _buildDeviceTypeArea(String processType, List<DeviceNode> devices, String Function(int?) getStatusText) {
+    return Container(
+      width: 300,
+      child: Column(
+        children: [
+          // 底图容器
+          Container(
+            width: 300,
+            height: 400,
+            decoration: BoxDecoration(
+              image: DecorationImage(
+                image: AssetImage(_getDeviceImage(processType)),
+                fit: BoxFit.contain,
+              ),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey.shade300, width: 1),
+            ),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: devices.asMap().entries.map((entry) {
+                final index = entry.key;
+                final device = entry.value;
+                final status = getStatusText(device.clientStatus);
+                final textColor = status == '工作' ? Colors.black : Colors.white;
+                
+                // 计算每个设备矩形的位置（根据设备索引排列）
+                final position = _calculateDevicePosition(index, devices.length, processType);
+                
+                return Positioned(
+                  left: position.dx,
+                  top: position.dy,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      // 状态矩形框
+                      Container(
+                        decoration: BoxDecoration(
+                          color: _getStatusBackgroundColor(status),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(
+                            color: Colors.white.withOpacity(0.5),
+                            width: 1.5,
                           ),
-                        ],
-                      ),
-                      padding: _getStatusPadding(processType),
-                      child: Text(
-                        _getStatusDisplayText(
-                          device['status'] as String,
-                          processType, // 传入设备类型决定是否换行
-                        ),
-                        style: TextStyle(
-                          fontSize: _getStatusFontSize(processType),
-                          fontWeight: FontWeight.bold,
-                          color: textColor,
-                          fontFamily: 'FZXBYS',
-                          shadows: [
-                            Shadow(color: Colors.black, offset: Offset(1, 1)),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.3),
+                              offset: Offset(0, 2),
+                              blurRadius: 3,
+                            ),
                           ],
                         ),
-                        textAlign: TextAlign.center,
+                        padding: _getStatusPadding(processType),
+                        child: Text(
+                          _getStatusDisplayText(status, processType),
+                          style: TextStyle(
+                            fontSize: _getStatusFontSize(processType),
+                            fontWeight: FontWeight.bold,
+                            color: textColor,
+                            fontFamily: 'FZXBYS',
+                            shadows: textColor == Colors.white ? [
+                              Shadow(color: Colors.black, offset: Offset(1, 1)),
+                            ] : [],
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
                       ),
-                    ),
-                  ),
-                ),
-              ),
-
-              // 设备名称
-              Padding(
-                padding: EdgeInsets.all(3),
-                child: Text(
-                  device['name'] as String,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    fontFamily: 'FZXBYS',
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-
-              // 人数信息（仅显示会议厅）
-              Padding(
-                padding: EdgeInsets.all(0),
-                child: Column(
-                  children: [
-                    Text(
-                      '出席: ${device['attend']}',
-                      style: TextStyle(fontSize: 12, fontFamily: 'FZXBYS'),
-                    ),
-                    SizedBox(height: 2),
-                    Text(
-                      '列席: ${device['guest']}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey[700],
-                        fontFamily: 'FZXBYS',
+                      SizedBox(height: 4),
+                      // 设备名称和人数信息
+                      Container(
+                        padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.6),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              device.stationName,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.white,
+                                fontFamily: 'FZXBYS',
+                              ),
+                            ),
+                            // 人数信息（仅显示会议厅）
+                            if (processType == 'rack')
+                              Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (device.attendNum != null && device.attendNum! > 0)
+                                    Text(
+                                      '出席:${device.attendNum}',
+                                      style: TextStyle(fontSize: 9, color: HexColor('#900000'), fontFamily: 'FZXBYS'),
+                                    ),
+                                  if (device.specialNum != null && device.specialNum! > 0)
+                                    Text(
+                                      '列席:${device.specialNum}',
+                                      style: TextStyle(fontSize: 9, color: HexColor('#900000'), fontFamily: 'FZXBYS'),
+                                    ),
+                                ],
+                              ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+                    ],
+                  ),
+                );
+              }).toList(),
+            ),
           ),
-        );
-      },
+        ],
+      ),
     );
+  }
+  
+  // 计算设备在底图上的位置
+  Offset _calculateDevicePosition(int index, int total, String processType) {
+    // 根据不同设备类型和数量，计算矩形框的位置
+    // 注意：这里的位置应该与底图上设备实际位置对应
+    // 如果底图上有固定的设备位置，需要根据设备的 StationName 或 IP 来确定具体位置
+    // 目前先使用相对偏移的方式，后续可以根据实际底图调整
+    
+    final baseOffset = _getStatusOffset(processType);
+    
+    switch (processType) {
+      case 'rack':
+        // 机架设备：如果多个设备，可以按网格排列
+        // 如果底图只有一个位置，所有设备重叠显示；如果有多个位置，按行列排列
+        if (total == 1) {
+          // 单个设备，使用基础偏移
+          return baseOffset;
+        } else {
+          // 多个设备，网格排列（可根据实际底图调整）
+          final cols = 3; // 每行3个
+          final row = index ~/ cols;
+          final col = index % cols;
+          return Offset(
+            baseOffset.dx + col * 90,
+            baseOffset.dy + row * 110,
+          );
+        }
+      case 'Client':
+        // 客户端设备：水平排列
+        if (total == 1) {
+          return baseOffset;
+        } else {
+          return Offset(
+            baseOffset.dx + index * 100,
+            baseOffset.dy,
+          );
+        }
+      case 'didian':
+        // 地垫设备：水平排列（位置靠下）
+        if (total == 1) {
+          return baseOffset;
+        } else {
+          return Offset(
+            baseOffset.dx + index * 100,
+            baseOffset.dy,
+          );
+        }
+      default:
+        return baseOffset;
+    }
   }
 
   String _getDeviceImage(String processType) {
@@ -701,7 +1519,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   // 会议管理内容（原有的功能按钮区域）
   Widget _buildMeetingManagementContent() {
     return Container(
-      height: 230, // 适当的高度，容纳两行按钮
+      height: 230, // 恢复原来的固定高度
       child: Column(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
@@ -713,29 +1531,21 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                 '开始',
                 Icons.play_arrow,
                 color: Colors.white,
-                onTap: () {
-                  // 开始按钮点击事件
-                  print('开始按钮被点击');
-                  // 这里添加开始会议的具体逻辑
-                },
+                enabled: _canStart && _meetStatus != 1,
+                onTap: _canStart && _meetStatus != 1 ? _startMeeting : null,
               ),
               _buildFunctionButton(
                 '结束',
                 Icons.power_settings_new,
                 color: Colors.white,
-                onTap: () {
-                  // 结束按钮点击事件
-                  print('结束按钮被点击');
-                  // 这里添加结束会议的具体逻辑
-                },
+                enabled: !_canStart && _meetStatus == 1,
+                onTap: !_canStart && _meetStatus == 1 ? _endMeeting : null,
               ),
               _buildFunctionButton(
                 '退出',
                 Icons.exit_to_app,
                 color: Colors.white,
                 onTap: () {
-                  // 退出按钮点击事件
-                  print('退出按钮被点击');
                   Navigator.pop(context);
                 },
               ),
@@ -749,37 +1559,117 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                 '数据上报',
                 Icons.cloud_upload,
                 color: Colors.white,
-                onTap: () {
-                  // 数据上报按钮点击事件
-                  print('数据上报按钮被点击');
-                  // 这里添加数据上报的具体逻辑
-                },
+                onTap: () => _showDeviceSelectionDialog('数据上报'),
               ),
-              _buildFunctionButton(
-                '数据检查',
-                Icons.search,
-                color: Colors.white,
-                onTap: () {
-                  // 数据检查按钮点击事件
-                  print('数据检查按钮被点击');
-                  // 这里添加数据检查的具体逻辑
-                },
-              ),
+                  _buildFunctionButton(
+                    '数据检查',
+                    Icons.search,
+                    color: Colors.white,
+                    onTap: _showDataCheckDialog,
+                  ),
               _buildFunctionButton(
                 '文件选取',
                 Icons.folder,
                 color: Colors.white,
-                onTap: () {
-                  // 文件选取按钮点击事件
-                  print('文件选取按钮被点击');
-                  // 这里添加文件选取的具体逻辑
-                },
+                onTap: _pickAndUploadFile,
               ),
             ],
           ),
         ],
       ),
     );
+  }
+  
+  // 显示设备选择对话框
+  Future<void> _showDeviceSelectionDialog(String action) async {
+    if (_deviceTree.isEmpty) {
+      _showMessage('暂无设备列表', isError: true);
+      return;
+    }
+    
+    final selectedDevices = <String>{..._selectedDeviceIds};
+    
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text('请选择设备'),
+          content: Container(
+            width: 400,
+            height: 400,
+            child: _buildDeviceTreeForDialog(selectedDevices, setDialogState),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: Text('取消'),
+            ),
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  _selectedDeviceIds = selectedDevices;
+                });
+                Navigator.pop(context, true);
+              },
+              child: Text('确定'),
+            ),
+          ],
+        ),
+      ),
+    );
+    
+    if (result == true && selectedDevices.isNotEmpty) {
+      if (action == '数据上报') {
+        _reportData();
+      } else if (action == '数据检查') {
+        _showDataCheckDialog();
+      }
+    } else if (result == true && selectedDevices.isEmpty) {
+      _showMessage('请至少选择一个设备', isError: true);
+    }
+  }
+  
+  // 构建设备树用于对话框
+  Widget _buildDeviceTreeForDialog(Set<String> selectedDevices, StateSetter setDialogState) {
+    return ListView.builder(
+      itemCount: _deviceTree.length,
+      itemBuilder: (context, index) {
+        return _buildTreeTileForDialog(_deviceTree[index], selectedDevices, setDialogState);
+      },
+    );
+  }
+  
+  // 构建树节点用于对话框
+  Widget _buildTreeTileForDialog(DeviceNode node, Set<String> selectedDevices, StateSetter setDialogState) {
+    if (node.children.isEmpty) {
+      // 叶子节点
+      return CheckboxListTile(
+        title: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(node.stationName),
+            if (node.ip != null)
+              Text('${_getAttendNum(node.ip)}', style: TextStyle(fontSize: 12)),
+          ],
+        ),
+        value: selectedDevices.contains(node.nodeID ?? node.id),
+        onChanged: (value) {
+          setDialogState(() {
+            if (value == true) {
+              selectedDevices.add(node.nodeID ?? node.id);
+            } else {
+              selectedDevices.remove(node.nodeID ?? node.id);
+            }
+          });
+        },
+      );
+    } else {
+      // 父节点
+      return ExpansionTile(
+        title: Text(node.stationName),
+        children: node.children.map((child) => _buildTreeTileForDialog(child, selectedDevices, setDialogState)).toList(),
+      );
+    }
   }
 
   // 修改函数签名，添加onTap参数
@@ -788,6 +1678,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     IconData icon, {
     Color? color,
     VoidCallback? onTap,
+    bool enabled = true,
   }) {
     // 根据文字长度调整字体大小
     double fontSize = title.length >= 4 ? 20 : 24;
@@ -798,8 +1689,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: onTap, // 使用传入的onTap回调
-          child: Container(
+          onTap: enabled ? onTap : null, // 使用传入的onTap回调
+          child: Opacity(
+            opacity: enabled ? 1.0 : 0.5,
+            child: Container(
             decoration: BoxDecoration(
               color: color ?? Colors.red,
               borderRadius: BorderRadius.circular(4),
@@ -831,6 +1724,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
               ],
             ),
           ),
+          ),
         ),
       ),
     );
@@ -859,15 +1753,12 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     switch (buttonType) {
       case '会标':
         // 处理会标显示逻辑
-        print('会标按钮被点击');
         break;
       case '报到情况':
         // 处理报到情况显示逻辑
-        print('报到情况按钮被点击');
         break;
       case '标语':
         // 处理标语显示逻辑
-        print('标语按钮被点击');
         break;
     }
   }
@@ -911,8 +1802,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                       width: double.infinity,
                       padding: const EdgeInsets.symmetric(vertical: 1),
                       child: Center(
-                        child: Text(
-                          '滨海市全国人民代表大会—第一次全体代表大会',
+                          child: Text(
+                          _meetingTitle.isNotEmpty ? _meetingTitle : widget.meetingName,
                           style: TextStyle(
                             fontFamily: 'FZXBYS',
                             fontSize: 28,
@@ -1172,7 +2063,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                               padding: const EdgeInsets.all(8),
                                               child: SingleChildScrollView(
                                                 child: Text(
-                                                  '这里显示通知信息',
+                                                  _notificationMessage.isNotEmpty 
+                                                      ? _notificationMessage 
+                                                      : '这里显示通知信息',
                                                   style: TextStyle(
                                                     fontSize: 14,
                                                     fontFamily: 'FZXBYS',

@@ -218,6 +218,156 @@ class SccClientWrapper {
       );
     }
   }
+
+  // 开始会议
+  static Future<ApiResult<bool>> startMeet(String meetID) async {
+    try {
+      final req = MeetReq(meetID: meetID);
+      final greq = GRequest(mreq: req);
+      final resp = await instance.client.startMeet(greq);
+      return ApiResult(
+        code: resp.code,
+        msg: resp.msg,
+        data: resp.code == 200,
+      );
+    } catch (e) {
+      return ApiResult(
+        code: -1,
+        msg: e.toString(),
+        data: false,
+      );
+    }
+  }
+
+  // 结束会议
+  static Future<ApiResult<bool>> endMeet(String meetID) async {
+    try {
+      final req = MeetReq(meetID: meetID);
+      final greq = GRequest(mreq: req);
+      final resp = await instance.client.endMeet(greq);
+      return ApiResult(
+        code: resp.code,
+        msg: resp.msg,
+        data: resp.code == 200,
+      );
+    } catch (e) {
+      return ApiResult(
+        code: -1,
+        msg: e.toString(),
+        data: false,
+      );
+    }
+  }
+
+  // 查询客户端
+  static Future<ApiResult<List<dynamic>>> queryClient() async {
+    try {
+      final result = await instance.queryClient();
+      return ApiResult(
+        code: 200,
+        msg: '成功',
+        data: result,
+      );
+    } catch (e) {
+      return ApiResult(
+        code: -1,
+        msg: e.toString(),
+        data: null,
+      );
+    }
+  }
+
+  // 数据检查
+  static Future<ApiResult<bool>> databaseCheck({
+    required String meetID,
+    required String stations,
+    required String tables,
+  }) async {
+    try {
+      final req = CheckReq(
+        meetID: meetID,
+        stations: stations,
+        tables: tables,
+      );
+      final greq = GRequest(creq: req);
+      final resp = await instance.client.databaseCheck(greq);
+      return ApiResult(
+        code: resp.code,
+        msg: resp.msg,
+        data: resp.code == 200,
+      );
+    } catch (e) {
+      return ApiResult(
+        code: -1,
+        msg: e.toString(),
+        data: false,
+      );
+    }
+  }
+
+  // 结束数据检查
+  static Future<ApiResult<bool>> endDatabaseCheck() async {
+    try {
+      final req = CheckReq();
+      final greq = GRequest(creq: req);
+      final resp = await instance.client.endDatabaseCheck(greq);
+      return ApiResult(
+        code: resp.code,
+        msg: resp.msg,
+        data: resp.code == 200,
+      );
+    } catch (e) {
+      return ApiResult(
+        code: -1,
+        msg: e.toString(),
+        data: false,
+      );
+    }
+  }
+
+  // 上报报到失败数据
+  static Future<ApiResult<bool>> reportCheckInFailed({
+    required String meetID,
+    required String stations,
+  }) async {
+    try {
+      final req = CheckReq(
+        meetID: meetID,
+        stations: stations,
+      );
+      final result = await instance.reportCheckInFailed(req);
+      return ApiResult(
+        code: 200,
+        msg: '成功',
+        data: result,
+      );
+    } catch (e) {
+      return ApiResult(
+        code: -1,
+        msg: e.toString(),
+        data: false,
+      );
+    }
+  }
+
+  // 导入报到记录
+  static Future<ApiResult<String>> importRecord(List<int> fileData) async {
+    try {
+      final req = ImportReq(file: fileData);
+      final result = await instance.importRecord(req);
+      return ApiResult(
+        code: 200,
+        msg: result,
+        data: result,
+      );
+    } catch (e) {
+      return ApiResult(
+        code: -1,
+        msg: e.toString(),
+        data: null,
+      );
+    }
+  }
 }
 
 
