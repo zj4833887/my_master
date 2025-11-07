@@ -3,8 +3,9 @@ import 'package:hexcolor/hexcolor.dart';
 
 class MeetingDetailScreen extends StatefulWidget {
   final String meetingName;
+  final String? meetId;
 
-  MeetingDetailScreen({required this.meetingName});
+  MeetingDetailScreen({required this.meetingName, this.meetId});
 
   @override
   State<MeetingDetailScreen> createState() => _MeetingDetailScreenState();

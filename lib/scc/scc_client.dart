@@ -1,0 +1,223 @@
+import 'dart:convert';
+import 'scc.dart';
+import 'scc.pb.dart';
+import '../config/scc_config.dart';
+
+/// API 响应结果封装
+class ApiResult<T> {
+  final int code;
+  final String msg;
+  final T? data;
+
+  ApiResult({
+    required this.code,
+    required this.msg,
+    this.data,
+  });
+
+  bool get isSuccess => code == 200;
+}
+
+class SccClientWrapper {
+  SccClientWrapper._();
+
+  static Scc? _client;
+
+  static Scc get instance {
+    _client ??= Scc(SccConfig.host, SccConfig.port);
+    return _client!;
+  }
+
+  static Future<void> close() async {
+    await _client?.close();
+    _client = null;
+  }
+
+  // 示例方法封装，便于调用
+  static Future<ApiResult<String>> ping() async {
+    try {
+      final resp = await instance.ping();
+      return ApiResult(
+        code: resp.code,
+        msg: resp.msg,
+        data: resp.toString(),
+      );
+    } catch (e) {
+      return ApiResult(
+        code: -1,
+        msg: e.toString(),
+        data: null,
+      );
+    }
+  }
+
+  static Future<ApiResult<bool>> login({required String name, required String password}) async {
+    try {
+      final req = LoginRequest(name: name, password: password);
+      final resp = await instance.client.login(req);
+      return ApiResult(
+        code: resp.code,
+        msg: resp.msg,
+        data: resp.code == 200,
+      );
+    } catch (e) {
+      return ApiResult(
+        code: -1,
+        msg: e.toString(),
+        data: false,
+      );
+    }
+  }
+
+  static Future<ApiResult<bool>> setMeet(String meetID) async {
+    try {
+      final req = MeetReq(meetID: meetID);
+      final greq = GRequest(mreq: req);
+      final resp = await instance.client.setMeet(greq);
+      return ApiResult(
+        code: resp.code,
+        msg: resp.msg,
+        data: resp.code == 200,
+      );
+    } catch (e) {
+      return ApiResult(
+        code: -1,
+        msg: e.toString(),
+        data: false,
+      );
+    }
+  }
+
+  static Future<ApiResult<List<dynamic>>> queryMeet({String? meetID}) async {
+    try {
+      // 无参调用：不设置 meetID 字段
+      final req = (meetID == null || meetID.isEmpty)
+          ? MeetReq()
+          : MeetReq(meetID: meetID);
+      final greq = req.hasMeetID() && req.meetID.isNotEmpty
+          ? GRequest(mreq: req)
+          : GRequest();
+      final resp = await instance.client.queryMeet(greq);
+      
+      if (resp.code != 200) {
+        return ApiResult(
+          code: resp.code,
+          msg: resp.msg,
+          data: null,
+        );
+      }
+
+      if (resp.data.isEmpty) {
+        return ApiResult(
+          code: resp.code,
+          msg: '服务器返回空数据',
+          data: [],
+        );
+      }
+
+      return ApiResult(
+        code: resp.code,
+        msg: resp.msg,
+        data: jsonDecode(resp.data) as List<dynamic>,
+      );
+    } catch (e) {
+      return ApiResult(
+        code: -1,
+        msg: e.toString(),
+        data: null,
+      );
+    }
+  }
+
+  static Future<ApiResult<Map<String, dynamic>>> queryMeetInfo(String meetID) async {
+    try {
+      final req = MeetReq(meetID: meetID);
+      final greq = GRequest(mreq: req);
+      final resp = await instance.client.queryMeetInfo(greq);
+      
+      if (resp.code != 200) {
+        return ApiResult(
+          code: resp.code,
+          msg: resp.msg,
+          data: null,
+        );
+      }
+
+      if (resp.data.isEmpty) {
+        return ApiResult(
+          code: resp.code,
+          msg: '服务器返回空数据',
+          data: {},
+        );
+      }
+
+      return ApiResult(
+        code: resp.code,
+        msg: resp.msg,
+        data: jsonDecode(resp.data) as Map<String, dynamic>,
+      );
+    } catch (e) {
+      return ApiResult(
+        code: -1,
+        msg: e.toString(),
+        data: null,
+      );
+    }
+  }
+
+  static Future<ApiResult<Map<String, dynamic>>> queryOnMeet() async {
+    try {
+      final req = GRequest();
+      final resp = await instance.client.queryOnMeet(req);
+      
+      if (resp.code != 200) {
+        return ApiResult(
+          code: resp.code,
+          msg: resp.msg,
+          data: null,
+        );
+      }
+
+      if (resp.data.isEmpty) {
+        return ApiResult(
+          code: resp.code,
+          msg: '服务器返回空数据',
+          data: {},
+        );
+      }
+
+      return ApiResult(
+        code: resp.code,
+        msg: resp.msg,
+        data: jsonDecode(resp.data) as Map<String, dynamic>,
+      );
+    } catch (e) {
+      return ApiResult(
+        code: -1,
+        msg: e.toString(),
+        data: null,
+      );
+    }
+  }
+
+  static Future<ApiResult<bool>> continueMeet(String meetID) async {
+    try {
+      final req = MeetReq(meetID: meetID);
+      final greq = GRequest(mreq: req);
+      final resp = await instance.client.continueMeet(greq);
+      return ApiResult(
+        code: resp.code,
+        msg: resp.msg,
+        data: resp.code == 200,
+      );
+    } catch (e) {
+      return ApiResult(
+        code: -1,
+        msg: e.toString(),
+        data: false,
+      );
+    }
+  }
+}
+
+

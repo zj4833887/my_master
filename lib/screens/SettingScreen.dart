@@ -3,41 +3,54 @@ import 'package:intl/intl.dart';
 import 'dart:async';
 import './MeetingDetailScreen.dart';
 import 'package:hexcolor/hexcolor.dart';
+import '../scc/scc_client.dart';
+
+// 会议数据模型
+class MeetingData {
+  final String? MeetID;
+  final String Name;
+  final bool? Checkin;
+  final int? MeetFinished;
+  final String? ParentID;
+
+  MeetingData({
+    this.MeetID,
+    required this.Name,
+    this.Checkin,
+    this.MeetFinished,
+    this.ParentID,
+  });
+
+  factory MeetingData.fromJson(Map<String, dynamic> json) {
+    // 处理字段名映射：后端返回的是 Meetid, Parentid, Meetfinished (小写)
+    // Checkin 是一个数组，包含子会议
+    return MeetingData(
+      MeetID: (json['MeetID'] ?? json['Meetid'])?.toString(),
+      Name: json['Name']?.toString() ?? '',
+      // Checkin 是数组，如果有子会议则不为空
+      Checkin: json['Checkin'] != null && 
+               json['Checkin'] is List && 
+               (json['Checkin'] as List).isNotEmpty,
+      MeetFinished: (json['MeetFinished'] ?? json['Meetfinished']) is int 
+          ? (json['MeetFinished'] ?? json['Meetfinished']) 
+          : ((json['MeetFinished'] ?? json['Meetfinished']) == true || 
+             (json['MeetFinished'] ?? json['Meetfinished']) == 1 ? 1 : 0),
+      ParentID: (json['ParentID'] ?? json['Parentid'])?.toString(),
+    );
+  }
+}
 
 class TreeNode {
   final String title;
   final List<TreeNode> children;
   final bool isMeeting;
+  final MeetingData? meetingData;
 
-  TreeNode(this.title, {this.children = const [], this.isMeeting = false});
-}
-
-final List<TreeNode> meetingTree = [
-  TreeNode(
-    '滨海市第三次代表大会',
-    children: [
-      TreeNode('开幕式', isMeeting: true),
-      TreeNode('第一次全体会议', isMeeting: true),
-      TreeNode('第二次全体会议', isMeeting: true),
-      TreeNode('闭幕式', isMeeting: true),
-    ],
-  ),
-];
-
-void main() {
-  runApp(MeetingCheckInApp());
-}
-
-class MeetingCheckInApp extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: '电子会议报到系统',
-      theme: ThemeData(primarySwatch: Colors.red),
-      home: MeetingCheckInScreen(),
-      debugShowCheckedModeBanner: false,
-    );
-  }
+  TreeNode(this.title, {
+    this.children = const [],
+    this.isMeeting = false,
+    this.meetingData,
+  });
 }
 
 class MeetingCheckInScreen extends StatefulWidget {
@@ -47,17 +60,37 @@ class MeetingCheckInScreen extends StatefulWidget {
 
 class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
   String _currentTime = '';
-  String _currentMeeting = '开幕式';
+  String _currentMeeting = '';
+  String? _currentMeetID;
   Timer? _timer;
 
-  // 模拟数据
+  // 会议列表数据
+  List<MeetingData> _meetingList = [];
+  String? _currentOnMeetID; // 当前进行的会议ID
+  
+  // 会议树形结构
+  List<TreeNode> _meetingTree = [];
+  
+  // 选中的会议ID
+  String? _selectedMeetID;
+  
+  // 是否显示准备会议信息（对应 Vue 的 set）
+  bool _isPreparing = false;
+  String _preparingTitle = '请选择会议';
+  
+  // 是否可以继续（对应 Vue 的 flag，当前选中会议是否是正在进行的会议）
+  bool _canContinue = false;
+  
+  // 会议统计数据
   Map<String, Map<String, int>> _attendanceData = {
-    '出席情况': {'应到': 300, '实到': 0, '未到': 0, '请假': 0, '实缺': 0},
-    '列席情况': {'应到': 50, '实到': 0, '未到': 0, '请假': 0, '实缺': 0},
+    '出席情况': {'应到': 0, '实到': 0, '未到': 0, '请假': 0, '实缺': 0},
+    '列席情况': {'应到': 0, '实到': 0, '未到': 0, '请假': 0, '实缺': 0},
   };
 
-  // 树节点的展开状态管理 - 简化版本
+  // 树节点的展开状态管理
   final Map<String, bool> _expandedState = {};
+  
+  bool _isLoading = true;
 
   @override
   void initState() {
@@ -67,8 +100,8 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
       _updateTime();
     });
 
-    // 初始化根节点为展开状态
-    _expandedState['滨海市第三次代表大会'] = true;
+    // 加载会议数据
+    _loadMeetingData();
   }
 
   @override
@@ -83,35 +116,314 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
     });
   }
 
-  void _enterMeeting() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => MeetingDetailScreen(meetingName: _currentMeeting),
-      ),
-    );
+  // 加载会议数据
+  Future<void> _loadMeetingData() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      // 获取会议列表（使用 gRPC）
+      final result = await SccClientWrapper.queryMeet();
+      if (result.isSuccess && result.data != null) {
+        // 展开所有会议（包括 Checkin 数组中的子会议）
+        List<Map<String, dynamic>> allMeetings = [];
+        for (var item in result.data!) {
+          // 添加父会议
+          allMeetings.add(item as Map<String, dynamic>);
+          
+          // 如果 Checkin 是数组，添加子会议
+          if (item['Checkin'] != null && item['Checkin'] is List) {
+            final checkinList = item['Checkin'] as List;
+            for (var child in checkinList) {
+              if (child is Map<String, dynamic>) {
+                allMeetings.add(child);
+              }
+            }
+          }
+        }
+        
+        setState(() {
+          _meetingList = allMeetings.map((item) => MeetingData.fromJson(item)).toList();
+        });
+        print('解析后的会议列表数量: ${_meetingList.length}');
+        // 构建树形结构
+        _buildMeetingTree();
+      }
+
+      // 获取当前进行的会议（使用 gRPC）
+      final onMeetResult = await SccClientWrapper.queryOnMeet();
+      if (onMeetResult.isSuccess && 
+          onMeetResult.data != null &&
+          onMeetResult.data!['serverStatus'] != null &&
+          onMeetResult.data!['serverStatus']['Meetid'] != null) {
+        setState(() {
+          _currentOnMeetID = onMeetResult.data!['serverStatus']['Meetid'].toString();
+          
+          // 找到对应的会议名称
+          final currentMeeting = _meetingList.firstWhere(
+            (m) => m.MeetID == _currentOnMeetID,
+            orElse: () => MeetingData(Name: ''),
+          );
+          if (currentMeeting.Name.isNotEmpty) {
+            _currentMeeting = currentMeeting.Name;
+            _currentMeetID = _currentOnMeetID;
+          }
+        });
+      }
+    } catch (e) {
+      // 错误处理
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
 
-  void _selectMeeting(String meeting) {
-    setState(() {
-      _currentMeeting = meeting;
-      // 模拟更新数据
-      _attendanceData['出席情况']?['实到'] = meeting == '开幕式' ? 285 : 290;
-      _attendanceData['出席情况']?['未到'] = meeting == '开幕式' ? 10 : 5;
-      _attendanceData['出席情况']?['请假'] = meeting == '开幕式' ? 5 : 5;
-      _attendanceData['出席情况']?['实缺'] = meeting == '开幕式' ? 15 : 10;
+  // 构建会议树形结构
+  void _buildMeetingTree() {
+    // 找出所有父级会议（ParentID 为 null 或不在列表中的）
+    final parentMeetings = _meetingList.where((m) => 
+      m.ParentID == null || 
+      m.ParentID == '' || 
+      !_meetingList.any((item) => item.MeetID != null && item.MeetID == m.ParentID)
+    ).toList();
 
-      _attendanceData['列席情况']?['实到'] = meeting == '开幕式' ? 45 : 48;
-      _attendanceData['列席情况']?['未到'] = meeting == '开幕式' ? 3 : 1;
-      _attendanceData['列席情况']?['请假'] = meeting == '开幕式' ? 2 : 1;
-      _attendanceData['列席情况']?['实缺'] = meeting == '开幕式' ? 5 : 2;
+    // 用于检测循环引用的集合
+    final Set<String?> processedIDs = {};
+    const int maxDepth = 100; // 最大深度限制，防止无限递归
+
+    // 构建树形结构
+    List<TreeNode> buildChildren(String? parentID, int depth) {
+      // 防止无限递归：检查深度和循环引用
+      if (depth > maxDepth) {
+        return [];
+      }
+
+      if (parentID != null && processedIDs.contains(parentID)) {
+        return [];
+      }
+
+      if (parentID != null) {
+        processedIDs.add(parentID);
+      }
+
+      // 过滤子节点，确保 ParentID 匹配且 MeetID 不为空
+      final children = _meetingList.where((m) => 
+        m.MeetID != null && 
+        m.MeetID!.isNotEmpty &&
+        m.ParentID == parentID
+      ).toList();
+
+      if (children.isEmpty) {
+        if (parentID != null) {
+          processedIDs.remove(parentID);
+        }
+        return [];
+      }
+
+      final result = children.map((meeting) {
+        final childMeetings = buildChildren(meeting.MeetID, depth + 1);
+        return TreeNode(
+          meeting.Name,
+          isMeeting: true,
+          meetingData: meeting,
+          children: childMeetings,
+        );
+      }).toList();
+
+      if (parentID != null) {
+        processedIDs.remove(parentID);
+      }
+
+      return result;
+    }
+
+    setState(() {
+      _meetingTree = parentMeetings.where((parent) => 
+        parent.MeetID != null && parent.MeetID!.isNotEmpty
+      ).map((parent) {
+        processedIDs.clear(); // 为每个根节点重置
+        final children = buildChildren(parent.MeetID, 0);
+        return TreeNode(
+          parent.Name,
+          children: children,
+          meetingData: parent,
+        );
+      }).toList();
+
+      // 初始化展开状态
+      if (_meetingTree.isNotEmpty) {
+        _expandedState[_meetingTree.first.title] = true;
+      }
     });
   }
 
-  // 递归构建树形结构 - 修复版本
+  // 处理节点点击（准备会议）
+  void _handleNodeClick(MeetingData data) {
+    setState(() {
+      _preparingTitle = '准备进行会议: ${data.Name}';
+      _selectedMeetID = data.MeetID;
+      
+      // 如果有 MeetID，设置 set=true 并加载会议信息
+      if (data.MeetID != null && data.MeetID!.isNotEmpty) {
+        _isPreparing = true;
+        print('270选择会议: ${data.MeetID}');
+        _loadMeetingInfo(data.MeetID!);
+      } else {
+        _isPreparing = false;
+      }
+
+      // 判断是否是当前进行的会议（flag 逻辑）
+      if (_currentOnMeetID == data.MeetID) {
+        _canContinue = true;
+        _currentMeeting = data.Name;
+        _currentMeetID = data.MeetID;
+      } else {
+        _canContinue = false;
+      }
+    });
+  }
+
+  // 加载会议信息
+  Future<void> _loadMeetingInfo(String meetID) async {
+    try {
+      // 使用 gRPC 调用
+      final result = await SccClientWrapper.queryMeetInfo(meetID);
+      print('292加载会议信息: ${result.data}');
+      if (result.isSuccess && result.data != null) {
+        final num = result.data!;
+        setState(() {
+          final notyet = (num['Personnum'] ?? 0) - (num['Personattendancenum'] ?? 0);
+          final shouldarrive = num['Personnum'] ?? 0;
+          final leave = num['Personleavenum'] ?? 0;
+          
+          _attendanceData['出席情况'] = {
+            '应到': shouldarrive,
+            '实到': num['Personattendancenum'] ?? 0,
+            '未到': notyet,
+            '请假': leave,
+            '实缺': notyet,
+          };
+
+          final specialNum = num['Specialnum'] ?? 0;
+          final specialAttend = num['Specialnattendancenum'] ?? 0;
+          final specialLeave = num['Specialleavenum'] ?? 0;
+          final specialNotyet = specialNum - specialAttend;
+
+          _attendanceData['列席情况'] = {
+            '应到': specialNum,
+            '实到': specialAttend,
+            '未到': specialNotyet,
+            '请假': specialLeave,
+            '实缺': specialNotyet,
+          };
+        });
+      }
+    } catch (e) {
+      // 错误处理
+    }
+  }
+
+  // 进入会议（对应 Vue 的 setUp - 选择按钮）
+  void _enterMeeting() async {
+    // 检查 set 状态（对应 Vue 的 if (this.set)）
+    if (!_isPreparing) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('请您选择二级会议')),
+      );
+      return;
+    }
+
+    if (_selectedMeetID == null || _selectedMeetID!.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('请您选择二级会议')),
+      );
+      return;
+    }
+
+    try {
+      // 使用 gRPC 调用设置会议
+      final result = await SccClientWrapper.setMeet(_selectedMeetID!);
+      
+      if (result.isSuccess && result.data == true) {
+        // 跳转到主页面，传递 MeetId 参数
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => MeetingDetailScreen(
+              meetingName: _preparingTitle.replaceAll('准备进行会议: ', ''),
+              meetId: _selectedMeetID,
+            ),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result.msg.isNotEmpty ? result.msg : '请您选择二级会议')),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('操作失败: $e')),
+      );
+    }
+  }
+
+  // 继续会议（对应 Vue 的 gonext）
+  void _continueMeeting() async {
+    if (_selectedMeetID == null || _selectedMeetID!.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('请您选择二级会议')),
+      );
+      return;
+    }
+
+    try {
+      // 使用 gRPC 调用继续会议
+      final result = await SccClientWrapper.continueMeet(_selectedMeetID!);
+      
+      if (result.isSuccess && result.data == true) {
+        // 跳转到主页面，传递 MeetId 参数
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => MeetingDetailScreen(
+              meetingName: _preparingTitle.replaceAll('准备进行会议: ', ''),
+              meetId: _selectedMeetID,
+            ),
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result.msg.isNotEmpty ? result.msg : '请您选择二级会议')),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('操作失败: $e')),
+      );
+    }
+  }
+
+  // 递归构建树形结构
   Widget _buildTree(TreeNode node, {int level = 0}) {
     final hasChildren = node.children.isNotEmpty;
-    final isExpanded = _expandedState[node.title] ?? (level == 0); // 根节点默认展开
+    final isExpanded = _expandedState[node.title] ?? (level == 0);
+    final meetingData = node.meetingData;
+    final isSelected = meetingData != null && _selectedMeetID == meetingData.MeetID;
+
+    // 判断会议状态
+    String? statusText;
+    Color? statusColor;
+    if (meetingData != null && meetingData.Checkin == false) {
+      if (meetingData.MeetFinished == 1) {
+        statusText = '（已结束）';
+        statusColor = HexColor('#5FB878');
+      } else {
+        statusText = '（未开始）';
+        statusColor = Colors.red;
+      }
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -120,7 +432,7 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
         Container(
           margin: EdgeInsets.only(left: (level * 20.0)),
           decoration: BoxDecoration(
-            color: node.isMeeting && _currentMeeting == node.title
+            color: isSelected
                 ? Colors.red[50]
                 : (isExpanded && hasChildren ? Colors.grey[50] : null),
             borderRadius: BorderRadius.circular(4),
@@ -140,27 +452,42 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                     },
                   )
                 : SizedBox(width: 40),
-            title: Text(
-              node.title,
-              style: TextStyle(
-                fontSize: 16,
-                fontFamily: 'FZXBYS',
-                fontWeight: node.isMeeting
-                    ? FontWeight.normal
-                    : FontWeight.w500,
-                color: node.isMeeting
-                    ? (_currentMeeting == node.title
-                          ? Colors.red[700]
-                          : Colors.black87)
-                    : Colors.blue[800],
-              ),
+            title: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    node.title,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontFamily: 'FZXBYS',
+                      fontWeight: node.isMeeting
+                          ? FontWeight.normal
+                          : FontWeight.w500,
+                      color: node.isMeeting
+                          ? (isSelected
+                                ? Colors.red[700]
+                                : Colors.black87)
+                          : Colors.blue[800],
+                    ),
+                  ),
+                ),
+                if (statusText != null && statusColor != null)
+                  Text(
+                    statusText,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontFamily: 'FZXBYS',
+                      color: statusColor,
+                    ),
+                  ),
+              ],
             ),
             trailing: node.isMeeting
                 ? Icon(Icons.meeting_room, color: Colors.red[700], size: 20)
                 : null,
             onTap: () {
-              if (node.isMeeting) {
-                _selectMeeting(node.title);
+              if (node.isMeeting && meetingData != null) {
+                _handleNodeClick(meetingData);
               } else if (hasChildren) {
                 setState(() {
                   _expandedState[node.title] = !isExpanded;
@@ -265,24 +592,66 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                     color: Colors.red[700],
                   ),
                 ),
+                Spacer(),
+                // 刷新按钮
+                IconButton(
+                  icon: Icon(Icons.refresh, color: Colors.red[700]),
+                  tooltip: '刷新',
+                  onPressed: _isLoading ? null : () {
+                    _loadMeetingData();
+                  },
+                ),
               ],
             ),
             SizedBox(height: 16),
-            // 树形结构容器
+            // 树形结构容器（带下拉刷新）
             Expanded(
               child: Container(
                 decoration: BoxDecoration(
                   border: Border.all(color: Colors.grey[300]!),
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: meetingTree
-                        .map((node) => _buildTree(node))
-                        .toList(),
-                  ),
-                ),
+                child: _isLoading && _meetingTree.isEmpty
+                    ? Center(
+                        child: CircularProgressIndicator(),
+                      )
+                    : _meetingTree.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Text(
+                                  '暂无会议数据',
+                                  style: TextStyle(
+                                    fontFamily: 'FZXBYS',
+                                    color: Colors.grey[600],
+                                  ),
+                                ),
+                                SizedBox(height: 16),
+                                ElevatedButton.icon(
+                                  onPressed: _isLoading ? null : () {
+                                    _loadMeetingData();
+                                  },
+                                  icon: Icon(Icons.refresh),
+                                  label: Text('刷新'),
+                                ),
+                              ],
+                            ),
+                          )
+                        : RefreshIndicator(
+                            onRefresh: () async {
+                              await _loadMeetingData();
+                            },
+                            child: SingleChildScrollView(
+                              physics: AlwaysScrollableScrollPhysics(),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: _meetingTree
+                                    .map((node) => _buildTree(node))
+                                    .toList(),
+                              ),
+                            ),
+                          ),
               ),
             ),
           ],
@@ -351,7 +720,7 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                     ],
                   ),
                   Text(
-                    _currentMeeting,
+                    _isPreparing ? _preparingTitle : (_currentMeeting.isNotEmpty ? _currentMeeting : '未选择会议'),
                     style: TextStyle(
                       fontSize: 18,
                       fontFamily: 'FZXBYS',
@@ -363,12 +732,12 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
               ),
             ),
             SizedBox(height: 20),
-            // 进入会议按钮
+            // 进入会议按钮（根据 _canContinue 决定调用哪个方法）
             SizedBox(
               width: double.infinity,
               height: 50,
               child: ElevatedButton.icon(
-                onPressed: _enterMeeting,
+                onPressed: _canContinue ? _continueMeeting : _enterMeeting,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: HexColor('#A30014'),
                   foregroundColor: Colors.white,
@@ -381,8 +750,8 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                     borderRadius: BorderRadius.circular(6),
                   ),
                 ),
-                icon: Icon(Icons.login, size: 24),
-                label: Text('进入会议'),
+                icon: Icon(_canContinue ? Icons.play_arrow : Icons.login, size: 24),
+                label: Text(_canContinue ? '继续会议' : '进入会议'),
               ),
             ),
             SizedBox(height: 20),

@@ -1,8 +1,8 @@
 // 导入Flutter Material Design组件库，这是构建Material风格UI的基础
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http; // 用于发起网络请求
-import 'dart:convert'; // 用于处理 JSON 编码和解码
+import 'package:flutter/services.dart';
 import './settingScreen.dart'; // 导入设置页面
+import '../scc/scc_client.dart'; // 导入 gRPC 客户端
 
 /// 应用的主入口函数
 ///
@@ -71,6 +71,19 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isLoading = false; // 是否正在加载中的状态标志
   bool _isPasswordVisible = false; // 密码是否可见的状态标志
   bool _dialogVisible = false; // 提示对话框是否可见的状态标志
+  late FocusNode _keyboardFocusNode; // 捕获回车键
+
+  @override
+  void initState() {
+    super.initState();
+    _keyboardFocusNode = FocusNode();
+    // 页面渲染后请求焦点，确保能捕获回车键
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _keyboardFocusNode.requestFocus();
+      }
+    });
+  }
 
   /// 模拟登录过程的异步方法
   ///
@@ -93,43 +106,35 @@ class _LoginScreenState extends State<LoginScreen> {
       return; // 直接返回，不执行后续请求
     }
 
-    // 替换为你的实际 API 端点
-    final String apiUrl = "http://localhost:8083/control/login";
+    // 使用 gRPC 调用登录接口
     try {
-      final response = await http.post(
-        Uri.parse(apiUrl),
-        body: {
-          'name': _usernameController.text,
-          'password': _passwordController.text,
-        },
+      final result = await SccClientWrapper.login(
+        name: _usernameController.text,
+        password: _passwordController.text,
       );
-      print(response.body); // 打印响应体，调试用
-      if (response.statusCode == 200) {
-        Map<String, dynamic> responseData = jsonDecode(response.body);
-        if (responseData['code'] == 200) {
-          // 登录成功
-          print('登录成功: ${responseData['message']}');
-        } else {
-          // 登录失败
-          print('登录失败: ${responseData['message']}');
-        }
+      
+      if (result.isSuccess && result.data == true) {
+        // 登录成功
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => MeetingCheckInScreen()),
+        );
       } else {
-        // 请求失败
-        print('请求失败:');
+        // 登录失败
+        setState(() {
+          _dialogVisible = true;
+        });
       }
     } catch (error) {
-      print('请求发生错误: $error');
       // 显示错误信息给用户
+      setState(() {
+        _dialogVisible = true;
+      });
     } finally {
       // 确保在请求完成或出错后隐藏加载圈
       setState(() {
         _isLoading = false;
       });
-      // 无论成功或失败都跳转
-      Navigator.push(
-        context,
-        MaterialPageRoute(builder: (context) => MeetingCheckInScreen()),
-      );
     }
   }
 
@@ -143,7 +148,17 @@ class _LoginScreenState extends State<LoginScreen> {
     // 使用Scaffold作为页面骨架，提供基本的Material Design布局结构
     return Scaffold(
       // 页面的主体部分，使用Stack实现图层叠加效果
-      body: Stack(
+      body: RawKeyboardListener(
+        focusNode: _keyboardFocusNode,
+        onKey: (RawKeyEvent event) {
+          if (event is RawKeyDownEvent) {
+            final key = event.logicalKey;
+            if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+              if (!_isLoading) _simulateLogin();
+            }
+          }
+        },
+        child: Stack(
         children: [
           // 背景容器，显示渐变背景色
           Container(
@@ -192,6 +207,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           // 用户名输入框
                           TextFormField(
                             controller: _usernameController, // 控制器
+                            textInputAction: TextInputAction.next,
                             decoration: InputDecoration(
                               labelText: '账号', // 标签文字
                               prefixIcon: const Icon(Icons.person), // 前缀图标
@@ -219,6 +235,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           TextFormField(
                             controller: _passwordController, // 控制器
                             obscureText: !_isPasswordVisible, // 是否隐藏文本（密码）
+                            textInputAction: TextInputAction.done,
                             decoration: InputDecoration(
                               labelText: '密码', // 标签文字
                               prefixIcon: const Icon(Icons.lock), // 前缀图标
@@ -328,6 +345,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
         ],
       ),
+    ),
     );
   }
 
@@ -336,6 +354,7 @@ class _LoginScreenState extends State<LoginScreen> {
   /// 用于释放资源和清理控制器，防止内存泄漏[4](@ref)
   @override
   void dispose() {
+    _keyboardFocusNode.dispose();
     _usernameController.dispose(); // 释放用户名控制器
     _passwordController.dispose(); // 释放密码控制器
     super.dispose(); // 调用父类的dispose方法

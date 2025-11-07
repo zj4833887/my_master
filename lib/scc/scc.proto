@@ -1,0 +1,117 @@
+syntax = "proto3";
+
+package scc;
+
+option go_package="./scc";
+
+message LoginRequest {
+  string name = 1;
+  string password = 2;
+}
+
+message GRequest {
+  oneof req {
+      MeetReq mreq = 1;
+      CheckReq creq = 2;
+      ImportReq ireq = 3;
+      ReportCheckFailedReq freq = 4;
+      CustomReq customs = 5;
+  };
+}
+
+message CustomReq {
+  map<string, string> customs = 1;
+}
+
+message MeetReq {
+  string MeetID = 1; // 会议 ID
+}
+
+message CheckReq {
+  string meetID = 1;
+  string stations = 2; // DatabaseCheck
+  string tables = 3; // DatabaseCheck
+}
+
+message ReportCheckFailedReq {
+  string meetID = 1;
+  string stations = 2;
+}
+
+message ImportReq {
+  bytes file = 1; // 文件内容
+}
+
+message GResponse {
+  int32 code = 1;
+  string msg = 2;
+  string data = 3;
+  string remark = 4;
+}
+
+message PushReq {
+
+}
+
+message PushMsg {
+
+}
+
+// 主控接口
+service CtrlApi {
+  rpc Ping(GRequest) returns(GResponse);
+  //查询会议参数
+  rpc QueryNoDatabaseParameters(GRequest) returns(GResponse);
+  //查询会议
+  rpc QueryMeet(GRequest) returns(GResponse);
+  //设置会议
+  rpc SetMeet(GRequest) returns(GResponse);
+  // 开始会议
+  rpc StartMeet(GRequest) returns(GResponse);
+  // 结束会议
+  rpc EndMeet(GRequest) returns(GResponse);
+  // 继续会议
+  rpc ContinueMeet(GRequest) returns(GResponse);
+  // 登录
+  rpc Login(LoginRequest) returns(GResponse);
+  // 数据校验
+  rpc DatabaseCheck(GRequest) returns(GResponse);
+  // 结束数据校验
+  rpc EndDatabaseCheck(GRequest) returns(GResponse);
+  // 上报报到失败数据
+  rpc ReportCheckInFailed(GRequest) returns(GResponse);
+  // 导入报到记录
+  rpc ImportRecord(GRequest) returns(GResponse);
+  // 查询客户端
+  rpc QueryClient(GRequest) returns(GResponse);
+  // 查寻当前会议
+  rpc QueryOnMeet(GRequest) returns(GResponse);
+  // 查询会议信息
+  rpc QueryMeetInfo(GRequest) returns(GResponse);
+}
+
+// 坐席终端 API
+service SeatMapApi {
+  rpc QueryMapInfo(GRequest) returns(GResponse);
+  rpc QueryMapList(GRequest) returns(GResponse);
+  rpc Update(GRequest) returns(GResponse);
+}
+
+// 查询终端API
+service QueryApi {
+  rpc cancelCheckIn(GRequest) returns(GResponse);
+  rpc queryPersonCheckInfo(GRequest) returns(GResponse);
+  rpc querySearchInfo(GRequest) returns(GResponse);
+  rpc querySignInInfo(GRequest) returns(GResponse);
+  rpc replenishCheckIn(GRequest) returns(GResponse);
+  rpc photoName(GRequest) returns(GResponse);
+  rpc queryOutPerson(GRequest) returns(GResponse);
+  rpc queryPersonCheckInLog(GRequest) returns(GResponse);
+  rpc queryLeaveCheckinPerson(GRequest) returns(GResponse);
+  rpc cancelLeaveCheckin(GRequest) returns(GResponse);
+}
+
+//初始化通用Controller
+service CommonApi {
+  rpc Websocket(PushReq) returns (stream PushMsg);
+}
