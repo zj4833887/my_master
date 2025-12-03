@@ -3,10 +3,15 @@ import 'dart:typed_data';
 import 'package:grpc/grpc.dart';
 import './scc.pb.dart';
 import './scc.pbgrpc.dart';
+import 'package:uuid/uuid.dart';
+import 'nscc.pbgrpc.dart';
 
 class Scc {
   late ClientChannel channel;
   late CtrlApiClient client;
+  late SloganApiClient sloganc;
+  late MetricApiClient metc;
+  late NCtrlApiClient nsc;
 
   Scc(String host, int port) {
     channel = ClientChannel (
@@ -17,7 +22,17 @@ class Scc {
         codecRegistry: CodecRegistry(codecs: const [GzipCodec()]),
       ),
     );
+    // 主控终端接口
     client = CtrlApiClient(channel);
+
+    // 标语接口
+    sloganc = SloganApiClient(channel);
+
+    // 大屏查询接口
+    metc = MetricApiClient(channel);
+
+    // 主控终端补充接口
+    nsc = NCtrlApiClient(channel);
   }
 
   Future<void> close() async {
@@ -62,10 +77,7 @@ class Scc {
   // 查询会议
   Future<List<dynamic>> queryMeet(MeetReq r) async {
     try {
-      // 后端无参获取列表时不应携带 mreq
-      final req = r.hasMeetID() && r.meetID.isNotEmpty
-          ? GRequest(mreq: r)
-          : GRequest();
+      final req = GRequest(mreq: r);
       final resp = await client.queryMeet(req);
       if (resp.code != 200) {
         throw Exception('请求失败，错误码: ${resp.code}, 消息: ${resp.msg}');
@@ -268,6 +280,98 @@ class Scc {
       }
 
       return jsonDecode(resp.data);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<dynamic> querySlogan() async {
+    try {
+      final req = GRequest();
+      final resp = await sloganc.query(req);
+      if (resp.code != 200) {
+        throw Exception('请求失败，错误码: ${resp.code}, 消息: ${resp.msg}');
+      }
+
+      if (resp.data.isEmpty) {
+        throw Exception('服务器返回空数据');
+      }
+
+      return jsonDecode(resp.data);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<bool> sendSlogan(SendSloganReq r) async {
+    try {
+      final req = GRequest(sreq: r);
+      final resp = await sloganc.send(req);
+      if (resp.code != 200) {
+        throw Exception('请求失败，错误码: ${resp.code}, 消息: ${resp.msg}');
+      }
+
+      if (resp.data.isEmpty) {
+        throw Exception('服务器返回空数据');
+      }
+
+      return true;
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<dynamic> queryCurrentSlogan() async {
+    try {
+      final req = GRequest();
+      final resp = await sloganc.queryCurrentSlog(req);
+      if (resp.code != 200) {
+        throw Exception('请求失败，错误码: ${resp.code}, 消息: ${resp.msg}');
+      }
+
+      if (resp.data.isEmpty) {
+        throw Exception('服务器返回空数据');
+      }
+
+      return jsonDecode(resp.data);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Stream<MetricMsg> subscribeMetrics() {
+    final uuid = Uuid();
+    String uid = uuid.v4();
+    var req = MetricReq(uid: uid);
+    return metc.subscribeMetrics(req);
+  }
+
+  Future<dynamic> queryProgressDiagram() async {
+    try {
+      final r = NGReq();
+      final resp = await nsc.queryProgressDiagram(r);
+      if (resp.code != 200) {
+        throw Exception('请求失败，错误码: ${resp.code}, 消息: ${resp.msg}');
+      }
+
+      if (resp.data.isEmpty) {
+        throw Exception('服务器返回空数据');
+      }
+
+      print(resp);
+      return jsonDecode(resp.data);
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<bool> setProgressDiagram(NGReq r) async {
+    try {
+      final resp = await nsc.setProgressDiagram(r);
+      if (resp.code != 200) {
+        throw Exception('请求失败，错误码: ${resp.code}, 消息: ${resp.msg}');
+      }
+      return true;
     } catch (e) {
       rethrow;
     }

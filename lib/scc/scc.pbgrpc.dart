@@ -378,67 +378,492 @@ abstract class CtrlApiServiceBase extends $grpc.Service {
       $grpc.ServiceCall call, $0.GRequest request);
 }
 
+class SeatMapApiClient extends $grpc.Client {
+  static final _$queryMapInfo = $grpc.ClientMethod<$0.GRequest, $0.GResponse>(
+      '/scc.SeatMapApi/QueryMapInfo',
+      ($0.GRequest value) => value.writeToBuffer(),
+      ($core.List<$core.int> value) => $0.GResponse.fromBuffer(value));
+  static final _$queryMapList = $grpc.ClientMethod<$0.GRequest, $0.GResponse>(
+      '/scc.SeatMapApi/QueryMapList',
+      ($0.GRequest value) => value.writeToBuffer(),
+      ($core.List<$core.int> value) => $0.GResponse.fromBuffer(value));
+  static final _$update = $grpc.ClientMethod<$0.GRequest, $0.GResponse>(
+      '/scc.SeatMapApi/Update',
+      ($0.GRequest value) => value.writeToBuffer(),
+      ($core.List<$core.int> value) => $0.GResponse.fromBuffer(value));
+
+  SeatMapApiClient($grpc.ClientChannel channel,
+      {$grpc.CallOptions? options,
+      $core.Iterable<$grpc.ClientInterceptor>? interceptors})
+      : super(channel, options: options, interceptors: interceptors);
+
+  $grpc.ResponseFuture<$0.GResponse> queryMapInfo($0.GRequest request,
+      {$grpc.CallOptions? options}) {
+    return $createUnaryCall(_$queryMapInfo, request, options: options);
+  }
+
+  $grpc.ResponseFuture<$0.GResponse> queryMapList($0.GRequest request,
+      {$grpc.CallOptions? options}) {
+    return $createUnaryCall(_$queryMapList, request, options: options);
+  }
+
+  $grpc.ResponseFuture<$0.GResponse> update($0.GRequest request,
+      {$grpc.CallOptions? options}) {
+    return $createUnaryCall(_$update, request, options: options);
+  }
+}
+
+abstract class SeatMapApiServiceBase extends $grpc.Service {
+  $core.String get $name => 'scc.SeatMapApi';
+
+  SeatMapApiServiceBase() {
+    $addMethod($grpc.ServiceMethod<$0.GRequest, $0.GResponse>(
+        'QueryMapInfo',
+        queryMapInfo_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) => $0.GRequest.fromBuffer(value),
+        ($0.GResponse value) => value.writeToBuffer()));
+    $addMethod($grpc.ServiceMethod<$0.GRequest, $0.GResponse>(
+        'QueryMapList',
+        queryMapList_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) => $0.GRequest.fromBuffer(value),
+        ($0.GResponse value) => value.writeToBuffer()));
+    $addMethod($grpc.ServiceMethod<$0.GRequest, $0.GResponse>(
+        'Update',
+        update_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) => $0.GRequest.fromBuffer(value),
+        ($0.GResponse value) => value.writeToBuffer()));
+  }
+
+  $async.Future<$0.GResponse> queryMapInfo_Pre(
+      $grpc.ServiceCall call, $async.Future<$0.GRequest> request) async {
+    return queryMapInfo(call, await request);
+  }
+
+  $async.Future<$0.GResponse> queryMapList_Pre(
+      $grpc.ServiceCall call, $async.Future<$0.GRequest> request) async {
+    return queryMapList(call, await request);
+  }
+
+  $async.Future<$0.GResponse> update_Pre(
+      $grpc.ServiceCall call, $async.Future<$0.GRequest> request) async {
+    return update(call, await request);
+  }
+
+  $async.Future<$0.GResponse> queryMapInfo(
+      $grpc.ServiceCall call, $0.GRequest request);
+  $async.Future<$0.GResponse> queryMapList(
+      $grpc.ServiceCall call, $0.GRequest request);
+  $async.Future<$0.GResponse> update(
+      $grpc.ServiceCall call, $0.GRequest request);
+}
+
 class QueryApiClient extends $grpc.Client {
+  static final _$cancelCheckIn = $grpc.ClientMethod<$0.QueryReq, $0.GResponse>(
+      '/scc.QueryApi/cancelCheckIn',
+      ($0.QueryReq value) => value.writeToBuffer(),
+      ($core.List<$core.int> value) => $0.GResponse.fromBuffer(value));
+  static final _$queryPersonCheckInfo =
+      $grpc.ClientMethod<$0.QueryReq, $0.GResponse>(
+          '/scc.QueryApi/queryPersonCheckInfo',
+          ($0.QueryReq value) => value.writeToBuffer(),
+          ($core.List<$core.int> value) => $0.GResponse.fromBuffer(value));
+  static final _$querySearchInfo =
+      $grpc.ClientMethod<$0.QueryReq, $0.GResponse>(
+          '/scc.QueryApi/querySearchInfo',
+          ($0.QueryReq value) => value.writeToBuffer(),
+          ($core.List<$core.int> value) => $0.GResponse.fromBuffer(value));
+  static final _$querySignInInfo =
+      $grpc.ClientMethod<$0.QueryReq, $0.GResponse>(
+          '/scc.QueryApi/querySignInInfo',
+          ($0.QueryReq value) => value.writeToBuffer(),
+          ($core.List<$core.int> value) => $0.GResponse.fromBuffer(value));
+  static final _$replenishCheckIn =
+      $grpc.ClientMethod<$0.QueryReq, $0.GResponse>(
+          '/scc.QueryApi/replenishCheckIn',
+          ($0.QueryReq value) => value.writeToBuffer(),
+          ($core.List<$core.int> value) => $0.GResponse.fromBuffer(value));
+  static final _$photoName = $grpc.ClientMethod<$0.QueryReq, $0.GResponse>(
+      '/scc.QueryApi/photoName',
+      ($0.QueryReq value) => value.writeToBuffer(),
+      ($core.List<$core.int> value) => $0.GResponse.fromBuffer(value));
+  static final _$queryOutPerson = $grpc.ClientMethod<$0.QueryReq, $0.GResponse>(
+      '/scc.QueryApi/queryOutPerson',
+      ($0.QueryReq value) => value.writeToBuffer(),
+      ($core.List<$core.int> value) => $0.GResponse.fromBuffer(value));
+  static final _$queryPersonCheckInLog =
+      $grpc.ClientMethod<$0.QueryReq, $0.GResponse>(
+          '/scc.QueryApi/queryPersonCheckInLog',
+          ($0.QueryReq value) => value.writeToBuffer(),
+          ($core.List<$core.int> value) => $0.GResponse.fromBuffer(value));
+  static final _$queryLeaveCheckinPerson =
+      $grpc.ClientMethod<$0.QueryReq, $0.GResponse>(
+          '/scc.QueryApi/queryLeaveCheckinPerson',
+          ($0.QueryReq value) => value.writeToBuffer(),
+          ($core.List<$core.int> value) => $0.GResponse.fromBuffer(value));
+  static final _$cancelLeaveCheckin =
+      $grpc.ClientMethod<$0.QueryReq, $0.GResponse>(
+          '/scc.QueryApi/cancelLeaveCheckin',
+          ($0.QueryReq value) => value.writeToBuffer(),
+          ($core.List<$core.int> value) => $0.GResponse.fromBuffer(value));
+
   QueryApiClient($grpc.ClientChannel channel,
       {$grpc.CallOptions? options,
       $core.Iterable<$grpc.ClientInterceptor>? interceptors})
       : super(channel, options: options, interceptors: interceptors);
+
+  $grpc.ResponseFuture<$0.GResponse> cancelCheckIn($0.QueryReq request,
+      {$grpc.CallOptions? options}) {
+    return $createUnaryCall(_$cancelCheckIn, request, options: options);
+  }
+
+  $grpc.ResponseFuture<$0.GResponse> queryPersonCheckInfo($0.QueryReq request,
+      {$grpc.CallOptions? options}) {
+    return $createUnaryCall(_$queryPersonCheckInfo, request, options: options);
+  }
+
+  $grpc.ResponseFuture<$0.GResponse> querySearchInfo($0.QueryReq request,
+      {$grpc.CallOptions? options}) {
+    return $createUnaryCall(_$querySearchInfo, request, options: options);
+  }
+
+  $grpc.ResponseFuture<$0.GResponse> querySignInInfo($0.QueryReq request,
+      {$grpc.CallOptions? options}) {
+    return $createUnaryCall(_$querySignInInfo, request, options: options);
+  }
+
+  $grpc.ResponseFuture<$0.GResponse> replenishCheckIn($0.QueryReq request,
+      {$grpc.CallOptions? options}) {
+    return $createUnaryCall(_$replenishCheckIn, request, options: options);
+  }
+
+  $grpc.ResponseFuture<$0.GResponse> photoName($0.QueryReq request,
+      {$grpc.CallOptions? options}) {
+    return $createUnaryCall(_$photoName, request, options: options);
+  }
+
+  $grpc.ResponseFuture<$0.GResponse> queryOutPerson($0.QueryReq request,
+      {$grpc.CallOptions? options}) {
+    return $createUnaryCall(_$queryOutPerson, request, options: options);
+  }
+
+  $grpc.ResponseFuture<$0.GResponse> queryPersonCheckInLog($0.QueryReq request,
+      {$grpc.CallOptions? options}) {
+    return $createUnaryCall(_$queryPersonCheckInLog, request, options: options);
+  }
+
+  $grpc.ResponseFuture<$0.GResponse> queryLeaveCheckinPerson(
+      $0.QueryReq request,
+      {$grpc.CallOptions? options}) {
+    return $createUnaryCall(_$queryLeaveCheckinPerson, request,
+        options: options);
+  }
+
+  $grpc.ResponseFuture<$0.GResponse> cancelLeaveCheckin($0.QueryReq request,
+      {$grpc.CallOptions? options}) {
+    return $createUnaryCall(_$cancelLeaveCheckin, request, options: options);
+  }
 }
 
 abstract class QueryApiServiceBase extends $grpc.Service {
   $core.String get $name => 'scc.QueryApi';
 
-  QueryApiServiceBase() {}
-}
+  QueryApiServiceBase() {
+    $addMethod($grpc.ServiceMethod<$0.QueryReq, $0.GResponse>(
+        'cancelCheckIn',
+        cancelCheckIn_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) => $0.QueryReq.fromBuffer(value),
+        ($0.GResponse value) => value.writeToBuffer()));
+    $addMethod($grpc.ServiceMethod<$0.QueryReq, $0.GResponse>(
+        'queryPersonCheckInfo',
+        queryPersonCheckInfo_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) => $0.QueryReq.fromBuffer(value),
+        ($0.GResponse value) => value.writeToBuffer()));
+    $addMethod($grpc.ServiceMethod<$0.QueryReq, $0.GResponse>(
+        'querySearchInfo',
+        querySearchInfo_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) => $0.QueryReq.fromBuffer(value),
+        ($0.GResponse value) => value.writeToBuffer()));
+    $addMethod($grpc.ServiceMethod<$0.QueryReq, $0.GResponse>(
+        'querySignInInfo',
+        querySignInInfo_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) => $0.QueryReq.fromBuffer(value),
+        ($0.GResponse value) => value.writeToBuffer()));
+    $addMethod($grpc.ServiceMethod<$0.QueryReq, $0.GResponse>(
+        'replenishCheckIn',
+        replenishCheckIn_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) => $0.QueryReq.fromBuffer(value),
+        ($0.GResponse value) => value.writeToBuffer()));
+    $addMethod($grpc.ServiceMethod<$0.QueryReq, $0.GResponse>(
+        'photoName',
+        photoName_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) => $0.QueryReq.fromBuffer(value),
+        ($0.GResponse value) => value.writeToBuffer()));
+    $addMethod($grpc.ServiceMethod<$0.QueryReq, $0.GResponse>(
+        'queryOutPerson',
+        queryOutPerson_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) => $0.QueryReq.fromBuffer(value),
+        ($0.GResponse value) => value.writeToBuffer()));
+    $addMethod($grpc.ServiceMethod<$0.QueryReq, $0.GResponse>(
+        'queryPersonCheckInLog',
+        queryPersonCheckInLog_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) => $0.QueryReq.fromBuffer(value),
+        ($0.GResponse value) => value.writeToBuffer()));
+    $addMethod($grpc.ServiceMethod<$0.QueryReq, $0.GResponse>(
+        'queryLeaveCheckinPerson',
+        queryLeaveCheckinPerson_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) => $0.QueryReq.fromBuffer(value),
+        ($0.GResponse value) => value.writeToBuffer()));
+    $addMethod($grpc.ServiceMethod<$0.QueryReq, $0.GResponse>(
+        'cancelLeaveCheckin',
+        cancelLeaveCheckin_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) => $0.QueryReq.fromBuffer(value),
+        ($0.GResponse value) => value.writeToBuffer()));
+  }
 
-class CompareChipClient extends $grpc.Client {
-  CompareChipClient($grpc.ClientChannel channel,
-      {$grpc.CallOptions? options,
-      $core.Iterable<$grpc.ClientInterceptor>? interceptors})
-      : super(channel, options: options, interceptors: interceptors);
-}
+  $async.Future<$0.GResponse> cancelCheckIn_Pre(
+      $grpc.ServiceCall call, $async.Future<$0.QueryReq> request) async {
+    return cancelCheckIn(call, await request);
+  }
 
-abstract class CompareChipServiceBase extends $grpc.Service {
-  $core.String get $name => 'scc.CompareChip';
+  $async.Future<$0.GResponse> queryPersonCheckInfo_Pre(
+      $grpc.ServiceCall call, $async.Future<$0.QueryReq> request) async {
+    return queryPersonCheckInfo(call, await request);
+  }
 
-  CompareChipServiceBase() {}
+  $async.Future<$0.GResponse> querySearchInfo_Pre(
+      $grpc.ServiceCall call, $async.Future<$0.QueryReq> request) async {
+    return querySearchInfo(call, await request);
+  }
+
+  $async.Future<$0.GResponse> querySignInInfo_Pre(
+      $grpc.ServiceCall call, $async.Future<$0.QueryReq> request) async {
+    return querySignInInfo(call, await request);
+  }
+
+  $async.Future<$0.GResponse> replenishCheckIn_Pre(
+      $grpc.ServiceCall call, $async.Future<$0.QueryReq> request) async {
+    return replenishCheckIn(call, await request);
+  }
+
+  $async.Future<$0.GResponse> photoName_Pre(
+      $grpc.ServiceCall call, $async.Future<$0.QueryReq> request) async {
+    return photoName(call, await request);
+  }
+
+  $async.Future<$0.GResponse> queryOutPerson_Pre(
+      $grpc.ServiceCall call, $async.Future<$0.QueryReq> request) async {
+    return queryOutPerson(call, await request);
+  }
+
+  $async.Future<$0.GResponse> queryPersonCheckInLog_Pre(
+      $grpc.ServiceCall call, $async.Future<$0.QueryReq> request) async {
+    return queryPersonCheckInLog(call, await request);
+  }
+
+  $async.Future<$0.GResponse> queryLeaveCheckinPerson_Pre(
+      $grpc.ServiceCall call, $async.Future<$0.QueryReq> request) async {
+    return queryLeaveCheckinPerson(call, await request);
+  }
+
+  $async.Future<$0.GResponse> cancelLeaveCheckin_Pre(
+      $grpc.ServiceCall call, $async.Future<$0.QueryReq> request) async {
+    return cancelLeaveCheckin(call, await request);
+  }
+
+  $async.Future<$0.GResponse> cancelCheckIn(
+      $grpc.ServiceCall call, $0.QueryReq request);
+  $async.Future<$0.GResponse> queryPersonCheckInfo(
+      $grpc.ServiceCall call, $0.QueryReq request);
+  $async.Future<$0.GResponse> querySearchInfo(
+      $grpc.ServiceCall call, $0.QueryReq request);
+  $async.Future<$0.GResponse> querySignInInfo(
+      $grpc.ServiceCall call, $0.QueryReq request);
+  $async.Future<$0.GResponse> replenishCheckIn(
+      $grpc.ServiceCall call, $0.QueryReq request);
+  $async.Future<$0.GResponse> photoName(
+      $grpc.ServiceCall call, $0.QueryReq request);
+  $async.Future<$0.GResponse> queryOutPerson(
+      $grpc.ServiceCall call, $0.QueryReq request);
+  $async.Future<$0.GResponse> queryPersonCheckInLog(
+      $grpc.ServiceCall call, $0.QueryReq request);
+  $async.Future<$0.GResponse> queryLeaveCheckinPerson(
+      $grpc.ServiceCall call, $0.QueryReq request);
+  $async.Future<$0.GResponse> cancelLeaveCheckin(
+      $grpc.ServiceCall call, $0.QueryReq request);
 }
 
 class SloganApiClient extends $grpc.Client {
+  static final _$send = $grpc.ClientMethod<$0.GRequest, $0.GResponse>(
+      '/scc.SloganApi/send',
+      ($0.GRequest value) => value.writeToBuffer(),
+      ($core.List<$core.int> value) => $0.GResponse.fromBuffer(value));
+  static final _$query = $grpc.ClientMethod<$0.GRequest, $0.GResponse>(
+      '/scc.SloganApi/query',
+      ($0.GRequest value) => value.writeToBuffer(),
+      ($core.List<$core.int> value) => $0.GResponse.fromBuffer(value));
+  static final _$queryCurrentSlog =
+      $grpc.ClientMethod<$0.GRequest, $0.GResponse>(
+          '/scc.SloganApi/queryCurrentSlog',
+          ($0.GRequest value) => value.writeToBuffer(),
+          ($core.List<$core.int> value) => $0.GResponse.fromBuffer(value));
+
   SloganApiClient($grpc.ClientChannel channel,
       {$grpc.CallOptions? options,
       $core.Iterable<$grpc.ClientInterceptor>? interceptors})
       : super(channel, options: options, interceptors: interceptors);
+
+  $grpc.ResponseFuture<$0.GResponse> send($0.GRequest request,
+      {$grpc.CallOptions? options}) {
+    return $createUnaryCall(_$send, request, options: options);
+  }
+
+  $grpc.ResponseFuture<$0.GResponse> query($0.GRequest request,
+      {$grpc.CallOptions? options}) {
+    return $createUnaryCall(_$query, request, options: options);
+  }
+
+  $grpc.ResponseFuture<$0.GResponse> queryCurrentSlog($0.GRequest request,
+      {$grpc.CallOptions? options}) {
+    return $createUnaryCall(_$queryCurrentSlog, request, options: options);
+  }
 }
 
 abstract class SloganApiServiceBase extends $grpc.Service {
   $core.String get $name => 'scc.SloganApi';
 
-  SloganApiServiceBase() {}
+  SloganApiServiceBase() {
+    $addMethod($grpc.ServiceMethod<$0.GRequest, $0.GResponse>(
+        'send',
+        send_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) => $0.GRequest.fromBuffer(value),
+        ($0.GResponse value) => value.writeToBuffer()));
+    $addMethod($grpc.ServiceMethod<$0.GRequest, $0.GResponse>(
+        'query',
+        query_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) => $0.GRequest.fromBuffer(value),
+        ($0.GResponse value) => value.writeToBuffer()));
+    $addMethod($grpc.ServiceMethod<$0.GRequest, $0.GResponse>(
+        'queryCurrentSlog',
+        queryCurrentSlog_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) => $0.GRequest.fromBuffer(value),
+        ($0.GResponse value) => value.writeToBuffer()));
+  }
+
+  $async.Future<$0.GResponse> send_Pre(
+      $grpc.ServiceCall call, $async.Future<$0.GRequest> request) async {
+    return send(call, await request);
+  }
+
+  $async.Future<$0.GResponse> query_Pre(
+      $grpc.ServiceCall call, $async.Future<$0.GRequest> request) async {
+    return query(call, await request);
+  }
+
+  $async.Future<$0.GResponse> queryCurrentSlog_Pre(
+      $grpc.ServiceCall call, $async.Future<$0.GRequest> request) async {
+    return queryCurrentSlog(call, await request);
+  }
+
+  $async.Future<$0.GResponse> send($grpc.ServiceCall call, $0.GRequest request);
+  $async.Future<$0.GResponse> query(
+      $grpc.ServiceCall call, $0.GRequest request);
+  $async.Future<$0.GResponse> queryCurrentSlog(
+      $grpc.ServiceCall call, $0.GRequest request);
 }
 
-class PortableApiClient extends $grpc.Client {
-  PortableApiClient($grpc.ClientChannel channel,
+class MetricApiClient extends $grpc.Client {
+  static final _$ping = $grpc.ClientMethod<$0.MetricReq, $0.MetricConfirm>(
+      '/scc.MetricApi/ping',
+      ($0.MetricReq value) => value.writeToBuffer(),
+      ($core.List<$core.int> value) => $0.MetricConfirm.fromBuffer(value));
+  static final _$subscribeMetrics =
+      $grpc.ClientMethod<$0.MetricReq, $0.MetricMsg>(
+          '/scc.MetricApi/subscribeMetrics',
+          ($0.MetricReq value) => value.writeToBuffer(),
+          ($core.List<$core.int> value) => $0.MetricMsg.fromBuffer(value));
+
+  MetricApiClient($grpc.ClientChannel channel,
       {$grpc.CallOptions? options,
       $core.Iterable<$grpc.ClientInterceptor>? interceptors})
       : super(channel, options: options, interceptors: interceptors);
+
+  $grpc.ResponseFuture<$0.MetricConfirm> ping($0.MetricReq request,
+      {$grpc.CallOptions? options}) {
+    return $createUnaryCall(_$ping, request, options: options);
+  }
+
+  $grpc.ResponseStream<$0.MetricMsg> subscribeMetrics($0.MetricReq request,
+      {$grpc.CallOptions? options}) {
+    return $createStreamingCall(
+        _$subscribeMetrics, $async.Stream.fromIterable([request]),
+        options: options);
+  }
 }
 
-abstract class PortableApiServiceBase extends $grpc.Service {
-  $core.String get $name => 'scc.PortableApi';
+abstract class MetricApiServiceBase extends $grpc.Service {
+  $core.String get $name => 'scc.MetricApi';
 
-  PortableApiServiceBase() {}
-}
+  MetricApiServiceBase() {
+    $addMethod($grpc.ServiceMethod<$0.MetricReq, $0.MetricConfirm>(
+        'ping',
+        ping_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) => $0.MetricReq.fromBuffer(value),
+        ($0.MetricConfirm value) => value.writeToBuffer()));
+    $addMethod($grpc.ServiceMethod<$0.MetricReq, $0.MetricMsg>(
+        'subscribeMetrics',
+        subscribeMetrics_Pre,
+        false,
+        true,
+        ($core.List<$core.int> value) => $0.MetricReq.fromBuffer(value),
+        ($0.MetricMsg value) => value.writeToBuffer()));
+  }
 
-class CommonApiClient extends $grpc.Client {
-  CommonApiClient($grpc.ClientChannel channel,
-      {$grpc.CallOptions? options,
-      $core.Iterable<$grpc.ClientInterceptor>? interceptors})
-      : super(channel, options: options, interceptors: interceptors);
-}
+  $async.Future<$0.MetricConfirm> ping_Pre(
+      $grpc.ServiceCall call, $async.Future<$0.MetricReq> request) async {
+    return ping(call, await request);
+  }
 
-abstract class CommonApiServiceBase extends $grpc.Service {
-  $core.String get $name => 'scc.CommonApi';
+  $async.Stream<$0.MetricMsg> subscribeMetrics_Pre(
+      $grpc.ServiceCall call, $async.Future<$0.MetricReq> request) async* {
+    yield* subscribeMetrics(call, await request);
+  }
 
-  CommonApiServiceBase() {}
+  $async.Future<$0.MetricConfirm> ping(
+      $grpc.ServiceCall call, $0.MetricReq request);
+  $async.Stream<$0.MetricMsg> subscribeMetrics(
+      $grpc.ServiceCall call, $0.MetricReq request);
 }

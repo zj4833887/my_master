@@ -114,13 +114,13 @@ class _LoginScreenState extends State<LoginScreen> {
       );
       
       if (result.isSuccess && result.data == true) {
-        // 登录成功
-        Navigator.push(
-          context,
-          MaterialPageRoute(builder: (context) => MeetingCheckInScreen()),
-        );
-      } else {
-        // 登录失败
+          // 登录成功
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => MeetingCheckInScreen()),
+          );
+        } else {
+          // 登录失败
         setState(() {
           _dialogVisible = true;
         });
@@ -345,7 +345,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
         ],
       ),
-    ),
+      ),
     );
   }
 

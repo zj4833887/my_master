@@ -1,0 +1,26 @@
+syntax = "proto3";
+
+package nscc;
+
+option go_package="./nscc";
+
+message NGReq {
+  string meetID = 1;
+  int32 step = 2;
+}
+
+message NGResp {
+  int32 code = 1;
+  string msg = 2;
+  string data = 3;
+  string remark = 4;
+}
+
+// 兼容性主控API
+service NCtrlApi {
+  // 获取进度面板
+  rpc QueryProgressDiagram(NGReq) returns(NGResp);
+
+  // 设置进度面板
+  rpc SetProgressDiagram(NGReq) returns(NGResp);
+}

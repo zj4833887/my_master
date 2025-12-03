@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'dart:convert';
 import 'scc.dart';
 import 'scc.pb.dart';
 import '../config/scc_config.dart';
+import 'board.dart';
 
 /// API 响应结果封装
 class ApiResult<T> {
@@ -366,6 +368,62 @@ class SccClientWrapper {
         msg: e.toString(),
         data: null,
       );
+    }
+  }
+
+  // 订阅指标数据流，处理 NormalData -> DeviceRouteMap
+  static StreamSubscription<MetricMsg>? subscribeMetricsData({
+    required MetricBoard metricBoard,
+    required Function(Map<String, dynamic> data, String channel) onData,
+    Function(String error)? onError,
+  }) {
+    try {
+      final stream = instance.subscribeMetrics();
+      final subscription = stream.listen(
+        (MetricMsg msg) {
+          print('msg: $msg');
+          // 只关心 NormalData，并且 remark 为 WS_CheckInInfo 的消息
+          if (msg.type == NormalData) {
+            try {
+              final jsonData = jsonDecode(msg.data) as Map<String, dynamic>;
+              final channel = msg.channel;
+              final remark = jsonData['remark']?.toString() ?? '';
+              print('remark: $remark');
+              if (remark == 'WS_CheckInInfo') {
+                // 仅输出 WS_CheckInInfo 的 gRPC 数据，减少日志噪音
+                print(
+                    'WS_CheckInInfo MetricMsg -> channel:$channel data:$jsonData');
+              }
+
+              if (channel.isNotEmpty) {
+                final routeKey = 'channel_$channel';
+                metricBoard.DeviceRouteMap[routeKey] = jsonData;
+              } else {
+                metricBoard.DeviceRouteMap['default'] = jsonData;
+              }
+
+              onData(jsonData, channel);
+            } catch (e) {
+              onError?.call('解析数据错误: $e');
+            }
+          } else if (msg.type == HeartBeat) {
+            // 心跳数据，无需处理
+          } else if (msg.type == OriginalData) {
+            // 原始数据，不做处理
+          }
+        },
+        onError: (error) {
+          onError?.call(error.toString());
+        },
+        onDone: () {
+          // 流结束
+        },
+      );
+
+      return subscription;
+    } catch (e) {
+      onError?.call(e.toString());
+      return null;
     }
   }
 }

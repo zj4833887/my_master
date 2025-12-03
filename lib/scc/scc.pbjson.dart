@@ -28,6 +28,7 @@ const GRequest$json = const {
     const {'1': 'ireq', '3': 3, '4': 1, '5': 11, '6': '.scc.ImportReq', '9': 0, '10': 'ireq'},
     const {'1': 'freq', '3': 4, '4': 1, '5': 11, '6': '.scc.ReportCheckFailedReq', '9': 0, '10': 'freq'},
     const {'1': 'customs', '3': 5, '4': 1, '5': 11, '6': '.scc.CustomReq', '9': 0, '10': 'customs'},
+    const {'1': 'sreq', '3': 6, '4': 1, '5': 11, '6': '.scc.SendSloganReq', '9': 0, '10': 'sreq'},
   ],
   '8': const [
     const {'1': 'req'},
@@ -35,7 +36,7 @@ const GRequest$json = const {
 };
 
 /// Descriptor for `GRequest`. Decode as a `google.protobuf.DescriptorProto`.
-final $typed_data.Uint8List gRequestDescriptor = $convert.base64Decode('CghHUmVxdWVzdBIiCgRtcmVxGAEgASgLMgwuc2NjLk1lZXRSZXFIAFIEbXJlcRIjCgRjcmVxGAIgASgLMg0uc2NjLkNoZWNrUmVxSABSBGNyZXESJAoEaXJlcRgDIAEoCzIOLnNjYy5JbXBvcnRSZXFIAFIEaXJlcRIvCgRmcmVxGAQgASgLMhkuc2NjLlJlcG9ydENoZWNrRmFpbGVkUmVxSABSBGZyZXESKgoHY3VzdG9tcxgFIAEoCzIOLnNjYy5DdXN0b21SZXFIAFIHY3VzdG9tc0IFCgNyZXE=');
+final $typed_data.Uint8List gRequestDescriptor = $convert.base64Decode('CghHUmVxdWVzdBIiCgRtcmVxGAEgASgLMgwuc2NjLk1lZXRSZXFIAFIEbXJlcRIjCgRjcmVxGAIgASgLMg0uc2NjLkNoZWNrUmVxSABSBGNyZXESJAoEaXJlcRgDIAEoCzIOLnNjYy5JbXBvcnRSZXFIAFIEaXJlcRIvCgRmcmVxGAQgASgLMhkuc2NjLlJlcG9ydENoZWNrRmFpbGVkUmVxSABSBGZyZXESKgoHY3VzdG9tcxgFIAEoCzIOLnNjYy5DdXN0b21SZXFIAFIHY3VzdG9tcxIoCgRzcmVxGAYgASgLMhIuc2NjLlNlbmRTbG9nYW5SZXFIAFIEc3JlcUIFCgNyZXE=');
 @$core.Deprecated('Use customReqDescriptor instead')
 const CustomReq$json = const {
   '1': 'CustomReq',
@@ -100,6 +101,85 @@ const ImportReq$json = const {
 
 /// Descriptor for `ImportReq`. Decode as a `google.protobuf.DescriptorProto`.
 final $typed_data.Uint8List importReqDescriptor = $convert.base64Decode('CglJbXBvcnRSZXESEgoEZmlsZRgBIAEoDFIEZmlsZQ==');
+@$core.Deprecated('Use queryReqDescriptor instead')
+const QueryReq$json = const {
+  '1': 'QueryReq',
+  '2': const [
+    const {'1': 'sreq', '3': 1, '4': 1, '5': 11, '6': '.scc.SearchReq', '9': 0, '10': 'sreq'},
+    const {'1': 'ireq', '3': 2, '4': 1, '5': 11, '6': '.scc.SignInReq', '9': 0, '10': 'ireq'},
+    const {'1': 'preq', '3': 3, '4': 1, '5': 11, '6': '.scc.PersonReq', '9': 0, '10': 'preq'},
+    const {'1': 'oreq', '3': 4, '4': 1, '5': 11, '6': '.scc.QueryTypeReq', '9': 0, '10': 'oreq'},
+  ],
+  '8': const [
+    const {'1': 'req'},
+  ],
+};
+
+/// Descriptor for `QueryReq`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List queryReqDescriptor = $convert.base64Decode('CghRdWVyeVJlcRIkCgRzcmVxGAEgASgLMg4uc2NjLlNlYXJjaFJlcUgAUgRzcmVxEiQKBGlyZXEYAiABKAsyDi5zY2MuU2lnbkluUmVxSABSBGlyZXESJAoEcHJlcRgDIAEoCzIOLnNjYy5QZXJzb25SZXFIAFIEcHJlcRInCgRvcmVxGAQgASgLMhEuc2NjLlF1ZXJ5VHlwZVJlcUgAUgRvcmVxQgUKA3JlcQ==');
+@$core.Deprecated('Use searchReqDescriptor instead')
+const SearchReq$json = const {
+  '1': 'SearchReq',
+  '2': const [
+    const {'1': 'meetID', '3': 1, '4': 1, '5': 9, '10': 'meetID'},
+    const {'1': 'condition', '3': 2, '4': 1, '5': 9, '10': 'condition'},
+    const {'1': 'kind', '3': 3, '4': 1, '5': 9, '10': 'kind'},
+  ],
+};
+
+/// Descriptor for `SearchReq`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List searchReqDescriptor = $convert.base64Decode('CglTZWFyY2hSZXESFgoGbWVldElEGAEgASgJUgZtZWV0SUQSHAoJY29uZGl0aW9uGAIgASgJUgljb25kaXRpb24SEgoEa2luZBgDIAEoCVIEa2luZA==');
+@$core.Deprecated('Use signInReqDescriptor instead')
+const SignInReq$json = const {
+  '1': 'SignInReq',
+  '2': const [
+    const {'1': 'meetID', '3': 1, '4': 1, '5': 9, '10': 'meetID'},
+    const {'1': 'condition', '3': 2, '4': 1, '5': 9, '10': 'condition'},
+    const {'1': 'kind', '3': 3, '4': 1, '5': 9, '10': 'kind'},
+    const {'1': 'type', '3': 4, '4': 1, '5': 9, '10': 'type'},
+    const {'1': 'size', '3': 5, '4': 1, '5': 9, '10': 'size'},
+    const {'1': 'index', '3': 6, '4': 1, '5': 9, '10': 'index'},
+  ],
+};
+
+/// Descriptor for `SignInReq`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List signInReqDescriptor = $convert.base64Decode('CglTaWduSW5SZXESFgoGbWVldElEGAEgASgJUgZtZWV0SUQSHAoJY29uZGl0aW9uGAIgASgJUgljb25kaXRpb24SEgoEa2luZBgDIAEoCVIEa2luZBISCgR0eXBlGAQgASgJUgR0eXBlEhIKBHNpemUYBSABKAlSBHNpemUSFAoFaW5kZXgYBiABKAlSBWluZGV4');
+@$core.Deprecated('Use personReqDescriptor instead')
+const PersonReq$json = const {
+  '1': 'PersonReq',
+  '2': const [
+    const {'1': 'meetID', '3': 1, '4': 1, '5': 9, '10': 'meetID'},
+    const {'1': 'personId', '3': 2, '4': 1, '5': 9, '10': 'personId'},
+    const {'1': 'leaveCheckin', '3': 3, '4': 1, '5': 9, '10': 'leaveCheckin'},
+  ],
+};
+
+/// Descriptor for `PersonReq`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List personReqDescriptor = $convert.base64Decode('CglQZXJzb25SZXESFgoGbWVldElEGAEgASgJUgZtZWV0SUQSGgoIcGVyc29uSWQYAiABKAlSCHBlcnNvbklkEiIKDGxlYXZlQ2hlY2tpbhgDIAEoCVIMbGVhdmVDaGVja2lu');
+@$core.Deprecated('Use queryTypeReqDescriptor instead')
+const QueryTypeReq$json = const {
+  '1': 'QueryTypeReq',
+  '2': const [
+    const {'1': 'meetID', '3': 1, '4': 1, '5': 9, '10': 'meetID'},
+    const {'1': 'personId', '3': 2, '4': 1, '5': 9, '10': 'personId'},
+    const {'1': 'type', '3': 3, '4': 1, '5': 9, '10': 'type'},
+    const {'1': 'size', '3': 4, '4': 1, '5': 9, '10': 'size'},
+    const {'1': 'index', '3': 5, '4': 1, '5': 9, '10': 'index'},
+  ],
+};
+
+/// Descriptor for `QueryTypeReq`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List queryTypeReqDescriptor = $convert.base64Decode('CgxRdWVyeVR5cGVSZXESFgoGbWVldElEGAEgASgJUgZtZWV0SUQSGgoIcGVyc29uSWQYAiABKAlSCHBlcnNvbklkEhIKBHR5cGUYAyABKAlSBHR5cGUSEgoEc2l6ZRgEIAEoCVIEc2l6ZRIUCgVpbmRleBgFIAEoCVIFaW5kZXg=');
+@$core.Deprecated('Use sendSloganReqDescriptor instead')
+const SendSloganReq$json = const {
+  '1': 'SendSloganReq',
+  '2': const [
+    const {'1': 'data', '3': 1, '4': 1, '5': 9, '10': 'data'},
+  ],
+};
+
+/// Descriptor for `SendSloganReq`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List sendSloganReqDescriptor = $convert.base64Decode('Cg1TZW5kU2xvZ2FuUmVxEhIKBGRhdGEYASABKAlSBGRhdGE=');
 @$core.Deprecated('Use gResponseDescriptor instead')
 const GResponse$json = const {
   '1': 'GResponse',
@@ -116,118 +196,59 @@ final $typed_data.Uint8List gResponseDescriptor = $convert.base64Decode('CglHUmV
 @$core.Deprecated('Use pushReqDescriptor instead')
 const PushReq$json = const {
   '1': 'PushReq',
+  '2': const [
+    const {'1': 'uid', '3': 1, '4': 1, '5': 9, '10': 'uid'},
+    const {'1': 'timestamp', '3': 2, '4': 1, '5': 5, '10': 'timestamp'},
+  ],
 };
 
 /// Descriptor for `PushReq`. Decode as a `google.protobuf.DescriptorProto`.
-final $typed_data.Uint8List pushReqDescriptor = $convert.base64Decode('CgdQdXNoUmVx');
+final $typed_data.Uint8List pushReqDescriptor = $convert.base64Decode('CgdQdXNoUmVxEhAKA3VpZBgBIAEoCVIDdWlkEhwKCXRpbWVzdGFtcBgCIAEoBVIJdGltZXN0YW1w');
 @$core.Deprecated('Use pushMsgDescriptor instead')
 const PushMsg$json = const {
   '1': 'PushMsg',
+  '2': const [
+    const {'1': 'type', '3': 1, '4': 1, '5': 5, '10': 'type'},
+    const {'1': 'data', '3': 2, '4': 1, '5': 9, '10': 'data'},
+    const {'1': 'timestamp', '3': 3, '4': 1, '5': 3, '10': 'timestamp'},
+  ],
 };
 
 /// Descriptor for `PushMsg`. Decode as a `google.protobuf.DescriptorProto`.
-final $typed_data.Uint8List pushMsgDescriptor = $convert.base64Decode('CgdQdXNoTXNn');
-const $core.Map<$core.String, $core.dynamic> CtrlApiServiceBase$json = const {
-  '1': 'CtrlApi',
+final $typed_data.Uint8List pushMsgDescriptor = $convert.base64Decode('CgdQdXNoTXNnEhIKBHR5cGUYASABKAVSBHR5cGUSEgoEZGF0YRgCIAEoCVIEZGF0YRIcCgl0aW1lc3RhbXAYAyABKANSCXRpbWVzdGFtcA==');
+@$core.Deprecated('Use metricReqDescriptor instead')
+const MetricReq$json = const {
+  '1': 'MetricReq',
   '2': const [
-    const {'1': 'Ping', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'QueryNoDatabaseParameters', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'QueryMeet', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'SetMeet', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'StartMeet', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'EndMeet', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'ContinueMeet', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'Login', '2': '.scc.LoginRequest', '3': '.scc.GResponse'},
-    const {'1': 'DatabaseCheck', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'EndDatabaseCheck', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'ReportCheckInFailed', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'ImportRecord', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'QueryClient', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'QueryOnMeet', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'QueryMeetInfo', '2': '.scc.GRequest', '3': '.scc.GResponse'},
+    const {'1': 'uid', '3': 1, '4': 1, '5': 9, '10': 'uid'},
+    const {'1': 'timestamp', '3': 2, '4': 1, '5': 3, '10': 'timestamp'},
   ],
 };
 
-@$core.Deprecated('Use ctrlApiServiceDescriptor instead')
-const $core.Map<$core.String, $core.Map<$core.String, $core.dynamic>> CtrlApiServiceBase$messageJson = const {
-  '.scc.GRequest': GRequest$json,
-  '.scc.MeetReq': MeetReq$json,
-  '.scc.CheckReq': CheckReq$json,
-  '.scc.ImportReq': ImportReq$json,
-  '.scc.ReportCheckFailedReq': ReportCheckFailedReq$json,
-  '.scc.CustomReq': CustomReq$json,
-  '.scc.CustomReq.CustomsEntry': CustomReq_CustomsEntry$json,
-  '.scc.GResponse': GResponse$json,
-  '.scc.LoginRequest': LoginRequest$json,
-};
-
-/// Descriptor for `CtrlApi`. Decode as a `google.protobuf.ServiceDescriptorProto`.
-final $typed_data.Uint8List ctrlApiServiceDescriptor = $convert.base64Decode('CgdDdHJsQXBpEiUKBFBpbmcSDS5zY2MuR1JlcXVlc3QaDi5zY2MuR1Jlc3BvbnNlEjoKGVF1ZXJ5Tm9EYXRhYmFzZVBhcmFtZXRlcnMSDS5zY2MuR1JlcXVlc3QaDi5zY2MuR1Jlc3BvbnNlEioKCVF1ZXJ5TWVldBINLnNjYy5HUmVxdWVzdBoOLnNjYy5HUmVzcG9uc2USKAoHU2V0TWVldBINLnNjYy5HUmVxdWVzdBoOLnNjYy5HUmVzcG9uc2USKgoJU3RhcnRNZWV0Eg0uc2NjLkdSZXF1ZXN0Gg4uc2NjLkdSZXNwb25zZRIoCgdFbmRNZWV0Eg0uc2NjLkdSZXF1ZXN0Gg4uc2NjLkdSZXNwb25zZRItCgxDb250aW51ZU1lZXQSDS5zY2MuR1JlcXVlc3QaDi5zY2MuR1Jlc3BvbnNlEioKBUxvZ2luEhEuc2NjLkxvZ2luUmVxdWVzdBoOLnNjYy5HUmVzcG9uc2USLgoNRGF0YWJhc2VDaGVjaxINLnNjYy5HUmVxdWVzdBoOLnNjYy5HUmVzcG9uc2USMQoQRW5kRGF0YWJhc2VDaGVjaxINLnNjYy5HUmVxdWVzdBoOLnNjYy5HUmVzcG9uc2USNAoTUmVwb3J0Q2hlY2tJbkZhaWxlZBINLnNjYy5HUmVxdWVzdBoOLnNjYy5HUmVzcG9uc2USLQoMSW1wb3J0UmVjb3JkEg0uc2NjLkdSZXF1ZXN0Gg4uc2NjLkdSZXNwb25zZRIsCgtRdWVyeUNsaWVudBINLnNjYy5HUmVxdWVzdBoOLnNjYy5HUmVzcG9uc2USLAoLUXVlcnlPbk1lZXQSDS5zY2MuR1JlcXVlc3QaDi5zY2MuR1Jlc3BvbnNlEi4KDVF1ZXJ5TWVldEluZm8SDS5zY2MuR1JlcXVlc3QaDi5zY2MuR1Jlc3BvbnNl');
-const $core.Map<$core.String, $core.dynamic> SeatMapApiServiceBase$json = const {
-  '1': 'SeatMapApi',
+/// Descriptor for `MetricReq`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List metricReqDescriptor = $convert.base64Decode('CglNZXRyaWNSZXESEAoDdWlkGAEgASgJUgN1aWQSHAoJdGltZXN0YW1wGAIgASgDUgl0aW1lc3RhbXA=');
+@$core.Deprecated('Use metricConfirmDescriptor instead')
+const MetricConfirm$json = const {
+  '1': 'MetricConfirm',
   '2': const [
-    const {'1': 'QueryMapInfo', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'QueryMapList', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'Update', '2': '.scc.GRequest', '3': '.scc.GResponse'},
+    const {'1': 'code', '3': 1, '4': 1, '5': 5, '10': 'code'},
+    const {'1': 'message', '3': 2, '4': 1, '5': 9, '10': 'message'},
+    const {'1': 'data', '3': 3, '4': 1, '5': 9, '10': 'data'},
   ],
 };
 
-@$core.Deprecated('Use seatMapApiServiceDescriptor instead')
-const $core.Map<$core.String, $core.Map<$core.String, $core.dynamic>> SeatMapApiServiceBase$messageJson = const {
-  '.scc.GRequest': GRequest$json,
-  '.scc.MeetReq': MeetReq$json,
-  '.scc.CheckReq': CheckReq$json,
-  '.scc.ImportReq': ImportReq$json,
-  '.scc.ReportCheckFailedReq': ReportCheckFailedReq$json,
-  '.scc.CustomReq': CustomReq$json,
-  '.scc.CustomReq.CustomsEntry': CustomReq_CustomsEntry$json,
-  '.scc.GResponse': GResponse$json,
-};
-
-/// Descriptor for `SeatMapApi`. Decode as a `google.protobuf.ServiceDescriptorProto`.
-final $typed_data.Uint8List seatMapApiServiceDescriptor = $convert.base64Decode('CgpTZWF0TWFwQXBpEi0KDFF1ZXJ5TWFwSW5mbxINLnNjYy5HUmVxdWVzdBoOLnNjYy5HUmVzcG9uc2USLQoMUXVlcnlNYXBMaXN0Eg0uc2NjLkdSZXF1ZXN0Gg4uc2NjLkdSZXNwb25zZRInCgZVcGRhdGUSDS5zY2MuR1JlcXVlc3QaDi5zY2MuR1Jlc3BvbnNl');
-const $core.Map<$core.String, $core.dynamic> QueryApiServiceBase$json = const {
-  '1': 'QueryApi',
+/// Descriptor for `MetricConfirm`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List metricConfirmDescriptor = $convert.base64Decode('Cg1NZXRyaWNDb25maXJtEhIKBGNvZGUYASABKAVSBGNvZGUSGAoHbWVzc2FnZRgCIAEoCVIHbWVzc2FnZRISCgRkYXRhGAMgASgJUgRkYXRh');
+@$core.Deprecated('Use metricMsgDescriptor instead')
+const MetricMsg$json = const {
+  '1': 'MetricMsg',
   '2': const [
-    const {'1': 'cancelCheckIn', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'queryPersonCheckInfo', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'querySearchInfo', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'querySignInInfo', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'replenishCheckIn', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'photoName', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'queryOutPerson', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'queryPersonCheckInLog', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'queryLeaveCheckinPerson', '2': '.scc.GRequest', '3': '.scc.GResponse'},
-    const {'1': 'cancelLeaveCheckin', '2': '.scc.GRequest', '3': '.scc.GResponse'},
+    const {'1': 'type', '3': 1, '4': 1, '5': 5, '10': 'type'},
+    const {'1': 'channel', '3': 2, '4': 1, '5': 9, '10': 'channel'},
+    const {'1': 'data', '3': 3, '4': 1, '5': 9, '10': 'data'},
+    const {'1': 'timestamp', '3': 4, '4': 1, '5': 3, '10': 'timestamp'},
   ],
 };
 
-@$core.Deprecated('Use queryApiServiceDescriptor instead')
-const $core.Map<$core.String, $core.Map<$core.String, $core.dynamic>> QueryApiServiceBase$messageJson = const {
-  '.scc.GRequest': GRequest$json,
-  '.scc.MeetReq': MeetReq$json,
-  '.scc.CheckReq': CheckReq$json,
-  '.scc.ImportReq': ImportReq$json,
-  '.scc.ReportCheckFailedReq': ReportCheckFailedReq$json,
-  '.scc.CustomReq': CustomReq$json,
-  '.scc.CustomReq.CustomsEntry': CustomReq_CustomsEntry$json,
-  '.scc.GResponse': GResponse$json,
-};
-
-/// Descriptor for `QueryApi`. Decode as a `google.protobuf.ServiceDescriptorProto`.
-final $typed_data.Uint8List queryApiServiceDescriptor = $convert.base64Decode('CghRdWVyeUFwaRIuCg1jYW5jZWxDaGVja0luEg0uc2NjLkdSZXF1ZXN0Gg4uc2NjLkdSZXNwb25zZRI1ChRxdWVyeVBlcnNvbkNoZWNrSW5mbxINLnNjYy5HUmVxdWVzdBoOLnNjYy5HUmVzcG9uc2USMAoPcXVlcnlTZWFyY2hJbmZvEg0uc2NjLkdSZXF1ZXN0Gg4uc2NjLkdSZXNwb25zZRIwCg9xdWVyeVNpZ25JbkluZm8SDS5zY2MuR1JlcXVlc3QaDi5zY2MuR1Jlc3BvbnNlEjEKEHJlcGxlbmlzaENoZWNrSW4SDS5zY2MuR1JlcXVlc3QaDi5zY2MuR1Jlc3BvbnNlEioKCXBob3RvTmFtZRINLnNjYy5HUmVxdWVzdBoOLnNjYy5HUmVzcG9uc2USLwoOcXVlcnlPdXRQZXJzb24SDS5zY2MuR1JlcXVlc3QaDi5zY2MuR1Jlc3BvbnNlEjYKFXF1ZXJ5UGVyc29uQ2hlY2tJbkxvZxINLnNjYy5HUmVxdWVzdBoOLnNjYy5HUmVzcG9uc2USOAoXcXVlcnlMZWF2ZUNoZWNraW5QZXJzb24SDS5zY2MuR1JlcXVlc3QaDi5zY2MuR1Jlc3BvbnNlEjMKEmNhbmNlbExlYXZlQ2hlY2tpbhINLnNjYy5HUmVxdWVzdBoOLnNjYy5HUmVzcG9uc2U=');
-const $core.Map<$core.String, $core.dynamic> CommonApiServiceBase$json = const {
-  '1': 'CommonApi',
-  '2': const [
-    const {'1': 'Websocket', '2': '.scc.PushReq', '3': '.scc.PushMsg', '6': true},
-  ],
-};
-
-@$core.Deprecated('Use commonApiServiceDescriptor instead')
-const $core.Map<$core.String, $core.Map<$core.String, $core.dynamic>> CommonApiServiceBase$messageJson = const {
-  '.scc.PushReq': PushReq$json,
-  '.scc.PushMsg': PushMsg$json,
-};
-
-/// Descriptor for `CommonApi`. Decode as a `google.protobuf.ServiceDescriptorProto`.
-final $typed_data.Uint8List commonApiServiceDescriptor = $convert.base64Decode('CglDb21tb25BcGkSKQoJV2Vic29ja2V0Egwuc2NjLlB1c2hSZXEaDC5zY2MuUHVzaE1zZzAB');
+/// Descriptor for `MetricMsg`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List metricMsgDescriptor = $convert.base64Decode('CglNZXRyaWNNc2cSEgoEdHlwZRgBIAEoBVIEdHlwZRIYCgdjaGFubmVsGAIgASgJUgdjaGFubmVsEhIKBGRhdGEYAyABKAlSBGRhdGESHAoJdGltZXN0YW1wGAQgASgDUgl0aW1lc3RhbXA=');

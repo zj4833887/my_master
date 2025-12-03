@@ -16,6 +16,7 @@ message GRequest {
       ImportReq ireq = 3;
       ReportCheckFailedReq freq = 4;
       CustomReq customs = 5;
+      SendSloganReq sreq = 6;
   };
 }
 
@@ -42,6 +43,51 @@ message ImportReq {
   bytes file = 1; // 文件内容
 }
 
+// 查询终端参数
+message QueryReq {
+  oneof req {
+    SearchReq sreq = 1;
+    SignInReq ireq = 2;
+    PersonReq preq = 3;
+    QueryTypeReq oreq = 4;
+  }
+}
+
+message SearchReq {
+    string meetID = 1;
+    string condition = 2;
+    string kind = 3;
+}
+
+message SignInReq {
+  string meetID = 1;
+  string condition = 2;
+  string kind = 3;
+  string type = 4;
+  string size = 5;
+  string index = 6;
+}
+
+message PersonReq {
+  string meetID = 1;
+  string personId = 2;
+  string leaveCheckin = 3;
+}
+
+message QueryTypeReq {
+  string meetID = 1;
+  string personId = 2;
+  string type = 3;
+  string size = 4;
+  string index = 5;
+}
+
+
+// 下发标语
+message SendSloganReq {
+  string data = 1;
+}
+
 message GResponse {
   int32 code = 1;
   string msg = 2;
@@ -50,11 +96,19 @@ message GResponse {
 }
 
 message PushReq {
-
+  string uid = 1;
+  int32 timestamp = 2;
 }
 
 message PushMsg {
+  int32 type = 1;
+  string data = 2;
+  int64 timestamp = 3;
+}
 
+message MetricReq {
+  string uid = 1;
+  int64 timestamp = 2;
 }
 
 // 主控接口
@@ -99,19 +153,44 @@ service SeatMapApi {
 
 // 查询终端API
 service QueryApi {
-  rpc cancelCheckIn(GRequest) returns(GResponse);
-  rpc queryPersonCheckInfo(GRequest) returns(GResponse);
-  rpc querySearchInfo(GRequest) returns(GResponse);
-  rpc querySignInInfo(GRequest) returns(GResponse);
-  rpc replenishCheckIn(GRequest) returns(GResponse);
-  rpc photoName(GRequest) returns(GResponse);
-  rpc queryOutPerson(GRequest) returns(GResponse);
-  rpc queryPersonCheckInLog(GRequest) returns(GResponse);
-  rpc queryLeaveCheckinPerson(GRequest) returns(GResponse);
-  rpc cancelLeaveCheckin(GRequest) returns(GResponse);
+  rpc cancelCheckIn(QueryReq) returns(GResponse);
+  rpc queryPersonCheckInfo(QueryReq) returns(GResponse);
+  rpc querySearchInfo(QueryReq) returns(GResponse);
+  rpc querySignInInfo(QueryReq) returns(GResponse);
+  rpc replenishCheckIn(QueryReq) returns(GResponse);
+  rpc photoName(QueryReq) returns(GResponse);
+  rpc queryOutPerson(QueryReq) returns(GResponse);
+  rpc queryPersonCheckInLog(QueryReq) returns(GResponse);
+  rpc queryLeaveCheckinPerson(QueryReq) returns(GResponse);
+  rpc cancelLeaveCheckin(QueryReq) returns(GResponse);
+}
+
+// 标语接口
+service SloganApi {
+  rpc send(GRequest) returns(GResponse);
+  rpc query(GRequest) returns(GResponse);
+  rpc queryCurrentSlog(GRequest) returns(GResponse);
 }
 
 //初始化通用Controller
-service CommonApi {
-  rpc Websocket(PushReq) returns (stream PushMsg);
+//service CommonApi {
+//  rpc subscribe(PushReq) returns (stream PushMsg);
+//}
+
+message MetricConfirm {
+  int32 code = 1;
+  string message = 2;
+  string data = 3;
+}
+
+message MetricMsg {
+  int32 type = 1; // 心跳或数据
+  string channel = 2; // 数据频道
+  string data = 3;
+  int64 timestamp = 4;
+}
+
+service MetricApi {
+  rpc ping(MetricReq) returns(MetricConfirm);
+  rpc subscribeMetrics(MetricReq) returns(stream MetricMsg);
 }
