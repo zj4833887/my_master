@@ -12,6 +12,8 @@ class Scc {
   late SloganApiClient sloganc;
   late MetricApiClient metc;
   late NCtrlApiClient nsc;
+  late SignInClientApiClient sicc;
+  late SeatMapApiClient seatMapc;
 
   Scc(String host, int port) {
     channel = ClientChannel (
@@ -33,6 +35,12 @@ class Scc {
 
     // 主控终端补充接口
     nsc = NCtrlApiClient(channel);
+
+    // 报到终端接口
+    sicc = SignInClientApiClient(channel);
+
+    // 设备点位图接口
+    seatMapc = SeatMapApiClient(channel);
   }
 
   Future<void> close() async {
@@ -346,10 +354,13 @@ class Scc {
     return metc.subscribeMetrics(req);
   }
 
-  Future<dynamic> queryProgressDiagram() async {
+  Future<dynamic> queryProgressDiagram({String? meetId}) async {
     try {
-      final r = NGReq();
-      final resp = await nsc.queryProgressDiagram(r);
+      final req = NGReq();
+      if (meetId != null && meetId.isNotEmpty) {
+        req.meetID = meetId;
+      }
+      final resp = await nsc.queryProgressDiagram(req);
       if (resp.code != 200) {
         throw Exception('请求失败，错误码: ${resp.code}, 消息: ${resp.msg}');
       }
@@ -358,16 +369,57 @@ class Scc {
         throw Exception('服务器返回空数据');
       }
 
-      print(resp);
       return jsonDecode(resp.data);
     } catch (e) {
       rethrow;
     }
   }
 
-  Future<bool> setProgressDiagram(NGReq r) async {
+  // 查询设备点位图
+  Future<Map<String, dynamic>> queryDeviceRouteMap({String? meetId}) async {
     try {
-      final resp = await nsc.setProgressDiagram(r);
+      MeetReq? meetReq;
+      if (meetId != null && meetId.isNotEmpty) {
+        meetReq = MeetReq(meetID: meetId);
+      }
+
+      final request = meetReq != null ? GRequest(mreq: meetReq) : GRequest();
+      final resp = await seatMapc.queryMapInfo(request);
+
+      if (resp.code != 200) {
+        throw Exception('请求失败，错误码: ${resp.code}, 消息: ${resp.msg}');
+      }
+
+      if (resp.data.isEmpty) {
+        throw Exception('服务器返回空数据');
+      }
+
+      return jsonDecode(resp.data) as Map<String, dynamic>;
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<bool> setProgressDiagram({required int step, String? meetId}) async {
+    try {
+      final sanitizedStep = step < 1 ? 1 : step;
+      final req = NGReq(step: sanitizedStep);
+      if (meetId != null && meetId.isNotEmpty) {
+        req.meetID = meetId;
+      }
+      final resp = await nsc.setProgressDiagram(req);
+      if (resp.code != 200) {
+        throw Exception('请求失败，错误码: ${resp.code}, 消息: ${resp.msg}');
+      }
+      return true;
+    } catch (e) {
+      rethrow;
+    }
+  }
+
+  Future<bool> setProcessType(SignInClientReq r) async {
+    try {
+      final resp = await sicc.setProcessType(r);
       if (resp.code != 200) {
         throw Exception('请求失败，错误码: ${resp.code}, 消息: ${resp.msg}');
       }

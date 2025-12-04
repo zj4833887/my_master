@@ -1,8 +1,8 @@
 import 'dart:typed_data';
 
-const HeartBeat = 1;
-const NormalData = 2;
-const OriginalData = 3;
+const HeartBeat = 1; // 心跳
+const NormalData = 2; // 普通数据
+const OriginalData = 3; // 原始数据
 
 class INode {
   String metric = ""; // 分组统计 团组 坐席 关注 证件类别

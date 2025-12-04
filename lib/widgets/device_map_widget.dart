@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -135,11 +136,21 @@ class FacilityRouteSettings {
       }
     }
 
+    final backendBgPath = json['BgImgUrl']?.toString() ??
+        json['BgImgPath']?.toString() ??
+        json['ImgUrl']?.toString() ??
+        json['ImgPath']?.toString() ??
+        '';
+
+    final resolvedBgPath = backendBgPath.isNotEmpty
+        ? backendBgPath
+        : 'assets/images/device_map.png';
+
     return FacilityRouteSettings(
       imgName: json['ImgName']?.toString() ?? '会议场地',
       canvasSize: Size(canvasWidth, canvasHeight),
-      // 默认底图使用现有资源，避免缺图
-      bgPath: 'assets/images/device_map.png',
+      // 后端可返回 base64 或 URL，URL 兜底为本地图片
+      bgPath: resolvedBgPath,
       bgBytes: bgBytes,
       facilities: facilities.isEmpty
           ? FacilityRouteMap.demo().settings.facilities
@@ -330,23 +341,61 @@ class FacilityRouteMap {
   }
 
   factory FacilityRouteMap.fromPayload(Map<String, dynamic> json) {
-    final routeId = json['RouteID']?.toString() ?? 'route-unknown';
-    final meetId = json['MeetID']?.toString() ?? 'meet-unknown';
-    final subMeetId = json['SubMeetID']?.toString() ?? 'sub-unknown';
-    final settingsList = json['RouteMapSettings'] as List<dynamic>? ?? const [];
-    final selected = settingsList.firstWhere(
-      (element) => element is Map<String, dynamic>,
-      orElse: () => settingsList.isNotEmpty ? settingsList.first : null,
-    );
-    if (selected is! Map<String, dynamic>) {
+    Map<String, dynamic>? selected;
+
+    final rawSettings =
+        (json['RouteMapSettings'] as List<dynamic>?)
+                ?.whereType<Map<String, dynamic>>()
+                .toList() ??
+            <Map<String, dynamic>>[];
+
+    if (rawSettings.isNotEmpty) {
+      selected = rawSettings.firstWhere(
+        _isRouteSettingsMap,
+        orElse: () => rawSettings.first,
+      );
+    }
+
+    final routeId = json['RouteID']?.toString() ??
+        json['RouteMapID']?.toString() ??
+        selected?['RouteID']?.toString() ??
+        'route-unknown';
+    final meetId = json['MeetID']?.toString() ??
+        json['meetID']?.toString() ??
+        selected?['MeetID']?.toString() ??
+        'meet-unknown';
+    final subMeetId = json['SubMeetID']?.toString() ??
+        json['subMeetID']?.toString() ??
+        selected?['SubMeetID']?.toString() ??
+        'sub-unknown';
+
+    if (selected == null || selected.isEmpty) {
+      if (_isRouteSettingsMap(json)) {
+        selected = json;
+      } else if (json['data'] is Map<String, dynamic> &&
+          _isRouteSettingsMap(json['data'] as Map<String, dynamic>)) {
+        selected = json['data'] as Map<String, dynamic>;
+      }
+    }
+
+    if (selected == null || selected.isEmpty) {
       return FacilityRouteMap.demo();
     }
+
     return FacilityRouteMap(
       routeId: routeId,
       meetId: meetId,
       subMeetId: subMeetId,
       settings: FacilityRouteSettings.fromBackend(selected),
     );
+  }
+
+  static bool _isRouteSettingsMap(Map<String, dynamic> map) {
+    return map.containsKey('Devices') ||
+        map.containsKey('CanvasSize') ||
+        map.containsKey('BgImg') ||
+        map.containsKey('BgImgUrl') ||
+        map.containsKey('ImgName');
   }
 }
 
@@ -368,7 +417,7 @@ class DeviceMapWidget extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: Colors.grey.shade300, width: 1),
@@ -383,7 +432,7 @@ class DeviceMapWidget extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox(height: 20),
+          const SizedBox(height: 12),
           // 设备分布图
           Expanded(
             child: LayoutBuilder(
@@ -392,35 +441,62 @@ class DeviceMapWidget extends StatelessWidget {
                 final facilities = settings.facilities.isEmpty
                     ? FacilityRouteMap.demo().settings.facilities
                     : settings.facilities;
-                return Stack(
-                  children: [
-                    Positioned.fill(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(4),
-                          image: DecorationImage(
-                            image: _buildBgImage(settings),
-                            fit: BoxFit.cover,
-                          ),
+                final baseWidth =
+                    settings.canvasSize.width == 0 ? 1920 : settings.canvasSize.width;
+                final baseHeight =
+                    settings.canvasSize.height == 0 ? 1080 : settings.canvasSize.height;
+
+                final scale = math.min(
+                  constraints.maxWidth / baseWidth,
+                  constraints.maxHeight / baseHeight,
+                );
+
+                final effectiveScale =
+                    (scale.isFinite && scale > 0 ? scale : 1.0).toDouble();
+                final renderWidth = (baseWidth * effectiveScale).toDouble();
+                final renderHeight = (baseHeight * effectiveScale).toDouble();
+
+                return Center(
+                  child: ClipRect(
+                    child: InteractiveViewer(
+                      minScale: 1,
+                      maxScale: 3.5,
+                      boundaryMargin: const EdgeInsets.all(160),
+                      child: SizedBox(
+                        width: renderWidth,
+                        height: renderHeight,
+                        child: Stack(
+                          children: [
+                            Positioned.fill(
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(4),
+                                  image: DecorationImage(
+                                    image: _buildBgImage(settings),
+                                    fit: BoxFit.fill,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            ...facilities.map((f) {
+                              final left = renderWidth * f.x;
+                              final top = renderHeight * f.y;
+                              return Positioned(
+                                left: left - 12,
+                                top: top - 12,
+                                child: _buildFacilityMarker(
+                                  context,
+                                  point: f,
+                                  isSelected: selectedGateName == f.facilityId,
+                                  onTap: onCabinetTap,
+                                ),
+                              );
+                            }),
+                          ],
                         ),
                       ),
                     ),
-                    // 设备点位
-                    ...facilities.map((f) {
-                      final left = constraints.maxWidth * f.x;
-                      final top = constraints.maxHeight * f.y;
-                      return Positioned(
-                        left: left - 12,
-                        top: top - 12,
-                        child: _buildFacilityMarker(
-                          context,
-                          point: f,
-                          isSelected: selectedGateName == f.facilityId,
-                          onTap: onCabinetTap,
-                        ),
-                      );
-                    }),
-                  ],
+                  ),
                 );
               },
             ),

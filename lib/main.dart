@@ -1,7 +1,19 @@
 import 'package:flutter/material.dart';
 import 'screens/login.dart';
+import 'scc/scc_client.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  // 在程序启动时设置客户端类型为 Server
+  SccClientWrapper.setProcessType('Server').then((result) {
+    if (result.isSuccess) {
+      print('设置客户端类型成功: Server');
+    } else {
+      print('设置客户端类型失败: ${result.msg}');
+    }
+  }).catchError((error) {
+    print('设置客户端类型出错: $error');
+  });
   runApp(const MyApp());
 }
 

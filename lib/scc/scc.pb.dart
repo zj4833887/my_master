@@ -449,13 +449,13 @@ class ReportCheckFailedReq extends $pb.GeneratedMessage {
 
 class ImportReq extends $pb.GeneratedMessage {
   static final $pb.BuilderInfo _i = $pb.BuilderInfo(const $core.bool.fromEnvironment('protobuf.omit_message_names') ? '' : 'ImportReq', package: const $pb.PackageName(const $core.bool.fromEnvironment('protobuf.omit_message_names') ? '' : 'scc'), createEmptyInstance: create)
-    ..a<$core.List<$core.int>>(1, const $core.bool.fromEnvironment('protobuf.omit_field_names') ? '' : 'file', $pb.PbFieldType.OY)
+    ..aOS(1, const $core.bool.fromEnvironment('protobuf.omit_field_names') ? '' : 'file')
     ..hasRequiredFields = false
   ;
 
   ImportReq._() : super();
   factory ImportReq({
-    $core.List<$core.int>? file,
+    $core.String? file,
   }) {
     final _result = create();
     if (file != null) {
@@ -485,9 +485,9 @@ class ImportReq extends $pb.GeneratedMessage {
   static ImportReq? _defaultInstance;
 
   @$pb.TagNumber(1)
-  $core.List<$core.int> get file => $_getN(0);
+  $core.String get file => $_getSZ(0);
   @$pb.TagNumber(1)
-  set file($core.List<$core.int> v) { $_setBytes(0, v); }
+  set file($core.String v) { $_setString(0, v); }
   @$pb.TagNumber(1)
   $core.bool hasFile() => $_has(0);
   @$pb.TagNumber(1)
@@ -1475,5 +1475,114 @@ class MetricMsg extends $pb.GeneratedMessage {
   $core.bool hasTimestamp() => $_has(3);
   @$pb.TagNumber(4)
   void clearTimestamp() => clearField(4);
+}
+
+enum SignInClientReq_Req {
+  preq, 
+  notSet
+}
+
+class SignInClientReq extends $pb.GeneratedMessage {
+  static const $core.Map<$core.int, SignInClientReq_Req> _SignInClientReq_ReqByTag = {
+    1 : SignInClientReq_Req.preq,
+    0 : SignInClientReq_Req.notSet
+  };
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(const $core.bool.fromEnvironment('protobuf.omit_message_names') ? '' : 'SignInClientReq', package: const $pb.PackageName(const $core.bool.fromEnvironment('protobuf.omit_message_names') ? '' : 'scc'), createEmptyInstance: create)
+    ..oo(0, [1])
+    ..aOM<PType>(1, const $core.bool.fromEnvironment('protobuf.omit_field_names') ? '' : 'preq', subBuilder: PType.create)
+    ..hasRequiredFields = false
+  ;
+
+  SignInClientReq._() : super();
+  factory SignInClientReq({
+    PType? preq,
+  }) {
+    final _result = create();
+    if (preq != null) {
+      _result.preq = preq;
+    }
+    return _result;
+  }
+  factory SignInClientReq.fromBuffer($core.List<$core.int> i, [$pb.ExtensionRegistry r = $pb.ExtensionRegistry.EMPTY]) => create()..mergeFromBuffer(i, r);
+  factory SignInClientReq.fromJson($core.String i, [$pb.ExtensionRegistry r = $pb.ExtensionRegistry.EMPTY]) => create()..mergeFromJson(i, r);
+  @$core.Deprecated(
+  'Using this can add significant overhead to your binary. '
+  'Use [GeneratedMessageGenericExtensions.deepCopy] instead. '
+  'Will be removed in next major version')
+  SignInClientReq clone() => SignInClientReq()..mergeFromMessage(this);
+  @$core.Deprecated(
+  'Using this can add significant overhead to your binary. '
+  'Use [GeneratedMessageGenericExtensions.rebuild] instead. '
+  'Will be removed in next major version')
+  SignInClientReq copyWith(void Function(SignInClientReq) updates) => super.copyWith((message) => updates(message as SignInClientReq)) as SignInClientReq; // ignore: deprecated_member_use
+  $pb.BuilderInfo get info_ => _i;
+  @$core.pragma('dart2js:noInline')
+  static SignInClientReq create() => SignInClientReq._();
+  SignInClientReq createEmptyInstance() => create();
+  static $pb.PbList<SignInClientReq> createRepeated() => $pb.PbList<SignInClientReq>();
+  @$core.pragma('dart2js:noInline')
+  static SignInClientReq getDefault() => _defaultInstance ??= $pb.GeneratedMessage.$_defaultFor<SignInClientReq>(create);
+  static SignInClientReq? _defaultInstance;
+
+  SignInClientReq_Req whichReq() => _SignInClientReq_ReqByTag[$_whichOneof(0)]!;
+  void clearReq() => clearField($_whichOneof(0));
+
+  @$pb.TagNumber(1)
+  PType get preq => $_getN(0);
+  @$pb.TagNumber(1)
+  set preq(PType v) { setField(1, v); }
+  @$pb.TagNumber(1)
+  $core.bool hasPreq() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearPreq() => clearField(1);
+  @$pb.TagNumber(1)
+  PType ensurePreq() => $_ensure(0);
+}
+
+class PType extends $pb.GeneratedMessage {
+  static final $pb.BuilderInfo _i = $pb.BuilderInfo(const $core.bool.fromEnvironment('protobuf.omit_message_names') ? '' : 'PType', package: const $pb.PackageName(const $core.bool.fromEnvironment('protobuf.omit_message_names') ? '' : 'scc'), createEmptyInstance: create)
+    ..aOS(1, const $core.bool.fromEnvironment('protobuf.omit_field_names') ? '' : 'type')
+    ..hasRequiredFields = false
+  ;
+
+  PType._() : super();
+  factory PType({
+    $core.String? type,
+  }) {
+    final _result = create();
+    if (type != null) {
+      _result.type = type;
+    }
+    return _result;
+  }
+  factory PType.fromBuffer($core.List<$core.int> i, [$pb.ExtensionRegistry r = $pb.ExtensionRegistry.EMPTY]) => create()..mergeFromBuffer(i, r);
+  factory PType.fromJson($core.String i, [$pb.ExtensionRegistry r = $pb.ExtensionRegistry.EMPTY]) => create()..mergeFromJson(i, r);
+  @$core.Deprecated(
+  'Using this can add significant overhead to your binary. '
+  'Use [GeneratedMessageGenericExtensions.deepCopy] instead. '
+  'Will be removed in next major version')
+  PType clone() => PType()..mergeFromMessage(this);
+  @$core.Deprecated(
+  'Using this can add significant overhead to your binary. '
+  'Use [GeneratedMessageGenericExtensions.rebuild] instead. '
+  'Will be removed in next major version')
+  PType copyWith(void Function(PType) updates) => super.copyWith((message) => updates(message as PType)) as PType; // ignore: deprecated_member_use
+  $pb.BuilderInfo get info_ => _i;
+  @$core.pragma('dart2js:noInline')
+  static PType create() => PType._();
+  PType createEmptyInstance() => create();
+  static $pb.PbList<PType> createRepeated() => $pb.PbList<PType>();
+  @$core.pragma('dart2js:noInline')
+  static PType getDefault() => _defaultInstance ??= $pb.GeneratedMessage.$_defaultFor<PType>(create);
+  static PType? _defaultInstance;
+
+  @$pb.TagNumber(1)
+  $core.String get type => $_getSZ(0);
+  @$pb.TagNumber(1)
+  set type($core.String v) { $_setString(0, v); }
+  @$pb.TagNumber(1)
+  $core.bool hasType() => $_has(0);
+  @$pb.TagNumber(1)
+  void clearType() => clearField(1);
 }
 

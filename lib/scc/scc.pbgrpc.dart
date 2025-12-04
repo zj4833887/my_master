@@ -867,3 +867,43 @@ abstract class MetricApiServiceBase extends $grpc.Service {
   $async.Stream<$0.MetricMsg> subscribeMetrics(
       $grpc.ServiceCall call, $0.MetricReq request);
 }
+
+class SignInClientApiClient extends $grpc.Client {
+  static final _$setProcessType =
+      $grpc.ClientMethod<$0.SignInClientReq, $0.GResponse>(
+          '/scc.SignInClientApi/setProcessType',
+          ($0.SignInClientReq value) => value.writeToBuffer(),
+          ($core.List<$core.int> value) => $0.GResponse.fromBuffer(value));
+
+  SignInClientApiClient($grpc.ClientChannel channel,
+      {$grpc.CallOptions? options,
+      $core.Iterable<$grpc.ClientInterceptor>? interceptors})
+      : super(channel, options: options, interceptors: interceptors);
+
+  $grpc.ResponseFuture<$0.GResponse> setProcessType($0.SignInClientReq request,
+      {$grpc.CallOptions? options}) {
+    return $createUnaryCall(_$setProcessType, request, options: options);
+  }
+}
+
+abstract class SignInClientApiServiceBase extends $grpc.Service {
+  $core.String get $name => 'scc.SignInClientApi';
+
+  SignInClientApiServiceBase() {
+    $addMethod($grpc.ServiceMethod<$0.SignInClientReq, $0.GResponse>(
+        'setProcessType',
+        setProcessType_Pre,
+        false,
+        false,
+        ($core.List<$core.int> value) => $0.SignInClientReq.fromBuffer(value),
+        ($0.GResponse value) => value.writeToBuffer()));
+  }
+
+  $async.Future<$0.GResponse> setProcessType_Pre(
+      $grpc.ServiceCall call, $async.Future<$0.SignInClientReq> request) async {
+    return setProcessType(call, await request);
+  }
+
+  $async.Future<$0.GResponse> setProcessType(
+      $grpc.ServiceCall call, $0.SignInClientReq request);
+}

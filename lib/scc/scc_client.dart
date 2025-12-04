@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'scc.dart';
 import 'scc.pb.dart';
 import '../config/scc_config.dart';
@@ -18,6 +19,16 @@ class ApiResult<T> {
   });
 
   bool get isSuccess => code == 200;
+}
+
+class ProgressStepResult {
+  final int step;
+  final dynamic payload;
+
+  const ProgressStepResult({
+    required this.step,
+    required this.payload,
+  });
 }
 
 class SccClientWrapper {
@@ -202,6 +213,24 @@ class SccClientWrapper {
     }
   }
 
+  static Future<ApiResult<Map<String, dynamic>>> queryDeviceRouteMap(
+      {String? meetID}) async {
+    try {
+      final result = await instance.queryDeviceRouteMap(meetId: meetID);
+      return ApiResult(
+        code: 200,
+        msg: '成功',
+        data: result,
+      );
+    } catch (e) {
+      return ApiResult(
+        code: -1,
+        msg: e.toString(),
+        data: null,
+      );
+    }
+  }
+
   static Future<ApiResult<bool>> continueMeet(String meetID) async {
     try {
       final req = MeetReq(meetID: meetID);
@@ -355,7 +384,9 @@ class SccClientWrapper {
   // 导入报到记录
   static Future<ApiResult<String>> importRecord(List<int> fileData) async {
     try {
-      final req = ImportReq(file: fileData);
+      // 将 List<int> 转换为 base64 字符串
+      final fileString = base64Encode(fileData);
+      final req = ImportReq(file: fileString);
       final result = await instance.importRecord(req);
       return ApiResult(
         code: 200,
@@ -371,6 +402,26 @@ class SccClientWrapper {
     }
   }
 
+  // 设置客户端类型
+  static Future<ApiResult<bool>> setProcessType(String type) async {
+    try {
+      final preq = PType(type: type);
+      final req = SignInClientReq(preq: preq);
+      final result = await instance.setProcessType(req);
+      return ApiResult(
+        code: 200,
+        msg: '成功',
+        data: result,
+      );
+    } catch (e) {
+      return ApiResult(
+        code: -1,
+        msg: e.toString(),
+        data: false,
+      );
+    }
+  }
+
   // 订阅指标数据流，处理 NormalData -> DeviceRouteMap
   static StreamSubscription<MetricMsg>? subscribeMetricsData({
     required MetricBoard metricBoard,
@@ -381,27 +432,18 @@ class SccClientWrapper {
       final stream = instance.subscribeMetrics();
       final subscription = stream.listen(
         (MetricMsg msg) {
-          print('msg: $msg');
-          // 只关心 NormalData，并且 remark 为 WS_CheckInInfo 的消息
+          // NormalData：业务数据（统计、报到点位图等），通过 msg.channel 区分逻辑通道
           if (msg.type == NormalData) {
             try {
               final jsonData = jsonDecode(msg.data) as Map<String, dynamic>;
-              final channel = msg.channel;
-              final remark = jsonData['remark']?.toString() ?? '';
-              print('remark: $remark');
-              if (remark == 'WS_CheckInInfo') {
-                // 仅输出 WS_CheckInInfo 的 gRPC 数据，减少日志噪音
-                print(
-                    'WS_CheckInInfo MetricMsg -> channel:$channel data:$jsonData');
-              }
+              final channel = msg.channel; // 这里区分 NormalData / DeviceRouteMap
 
-              if (channel.isNotEmpty) {
-                final routeKey = 'channel_$channel';
-                metricBoard.DeviceRouteMap[routeKey] = jsonData;
-              } else {
-                metricBoard.DeviceRouteMap['default'] = jsonData;
-              }
+              // 所有 NormalData 都写入 DeviceRouteMap，key 带上 channel 方便区分
+              final routeKey =
+                  channel.isNotEmpty ? 'channel_$channel' : 'channel_NormalData';
+              metricBoard.DeviceRouteMap[routeKey] = jsonData;
 
+              // 回调到上层，由 UI 根据 channel 决定是统计、点位图还是其他展示
               onData(jsonData, channel);
             } catch (e) {
               onError?.call('解析数据错误: $e');
@@ -409,7 +451,18 @@ class SccClientWrapper {
           } else if (msg.type == HeartBeat) {
             // 心跳数据，无需处理
           } else if (msg.type == OriginalData) {
-            // 原始数据，不做处理
+            // OriginalData：负责 WS_Client / WS_MeetInfo / WS_CheckInInfo / WS_StationNum 等显示类数据
+            try {
+              final jsonData = jsonDecode(msg.data) as Map<String, dynamic>;
+              final remark = jsonData['remark']?.toString() ?? '';
+
+              // 使用 remark 作为 channel 传回上层，方便区分不同 WS_* 类型
+              final effectiveChannel =
+                  remark.isNotEmpty ? remark : msg.channel;
+              onData(jsonData, effectiveChannel);
+            } catch (e) {
+              onError?.call('解析 OriginalData 错误: $e');
+            }
           }
         },
         onError: (error) {
@@ -425,6 +478,154 @@ class SccClientWrapper {
       onError?.call(e.toString());
       return null;
     }
+  }
+
+  static Future<ApiResult<ProgressStepResult>> queryProgressStep({String? meetID}) async {
+    try {
+      final result =
+          await instance.queryProgressDiagram(meetId: meetID);
+      developer.log(
+        '477queryProgressDiagram payload: $result',
+        name: 'SccClientWrapper',
+      );
+      final step = _extractProgressStep(result);
+      if (step == null) {
+        return ApiResult(
+          code: -1,
+          msg: '解析步骤数据失败',
+          data: null,
+        );
+      }
+
+      return ApiResult(
+        code: 200,
+        msg: '成功',
+        data: ProgressStepResult(step: step, payload: result),
+      );
+    } catch (e) {
+      return ApiResult(
+        code: -1,
+        msg: e.toString(),
+        data: null,
+      );
+    }
+  }
+
+  static Future<ApiResult<bool>> setProgressStep({
+    required int step,
+    String? meetID,
+  }) async {
+    try {
+      final sanitizedStep = step < 1 ? 1 : step;
+      final success = await instance.setProgressDiagram(
+        step: sanitizedStep,
+        meetId: meetID,
+      );
+      return ApiResult(
+        code: success ? 200 : -1,
+        msg: success ? '成功' : '更新失败',
+        data: success,
+      );
+    } catch (e) {
+      return ApiResult(
+        code: -1,
+        msg: e.toString(),
+        data: false,
+      );
+    }
+  }
+
+  static int? _extractProgressStep(dynamic payload) {
+    if (payload == null) return null;
+    final normalized = _normalizePayload(payload);
+
+    if (normalized is num) {
+      final value = normalized.toInt();
+      return value < 1 ? 1 : value;
+    }
+
+    if (normalized is Map) {
+      final map = normalized.map<String, dynamic>(
+        (key, value) => MapEntry(key.toString(), value),
+      );
+
+      final directKeys = <String>[
+        'step',
+        'Step',
+        'currentStep',
+        'current',
+        'progress',
+        'progressStep',
+        'completedStep',
+        'value',
+      ];
+
+      for (final key in directKeys) {
+        if (map.containsKey(key)) {
+          final candidate = _extractProgressStep(map[key]);
+          if (candidate != null) {
+            return candidate;
+          }
+        }
+      }
+
+      for (final nestedKey in ['data', 'steps', 'list', 'items', 'diagram']) {
+        if (map.containsKey(nestedKey)) {
+          final candidate = _extractProgressStep(map[nestedKey]);
+          if (candidate != null) {
+            return candidate;
+          }
+        }
+      }
+
+      final maybeStep = map['step'];
+      final executed = map['executed'];
+      if (maybeStep is num) {
+        if (executed is bool) {
+          if (executed) {
+            return maybeStep.toInt();
+          }
+        } else {
+          return maybeStep.toInt();
+        }
+      }
+
+      return null;
+    }
+
+    if (normalized is List) {
+      int? highest;
+      for (final item in normalized) {
+        final candidate = _extractProgressStep(item);
+        if (candidate != null) {
+          if (highest == null || candidate > highest) {
+            highest = candidate;
+          }
+        }
+      }
+      return highest;
+    }
+
+    return null;
+  }
+
+  static dynamic _normalizePayload(dynamic value) {
+    if (value is String) {
+      final trimmed = value.trim();
+      final numeric = int.tryParse(trimmed);
+      if (numeric != null) {
+        return numeric;
+      }
+      if ((trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+          (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        try {
+          return jsonDecode(trimmed);
+        } catch (_) {
+          return value;
+        }
+      }
+    }
+    return value;
   }
 }
 

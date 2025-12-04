@@ -1,10 +1,44 @@
 import 'package:flutter/material.dart';
 import 'package:hexcolor/hexcolor.dart';
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import '../scc/scc_client.dart';
 import '../scc/board.dart';
+import '../widgets/device_map_widget.dart';
+
+class _ProgressStepInfo {
+  final String title;
+  final int step;
+  final bool executed;
+
+  const _ProgressStepInfo({
+    required this.title,
+    required this.step,
+    required this.executed,
+  });
+
+  _ProgressStepInfo copyWith({
+    String? title,
+    int? step,
+    bool? executed,
+  }) {
+    return _ProgressStepInfo(
+      title: title ?? this.title,
+      step: step ?? this.step,
+      executed: executed ?? this.executed,
+    );
+  }
+}
+
+const List<_ProgressStepInfo> _kDefaultProgressSteps = [
+  _ProgressStepInfo(title: '需求分析', step: 1, executed: false),
+  _ProgressStepInfo(title: '方案设计', step: 2, executed: false),
+  _ProgressStepInfo(title: '开发实施', step: 3, executed: false),
+  _ProgressStepInfo(title: '测试验证', step: 4, executed: false),
+  _ProgressStepInfo(title: '上线部署', step: 5, executed: false),
+];
 
 class MeetingDetailScreen extends StatefulWidget {
   final String meetingName;
@@ -39,6 +73,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   // 会议名称 - 从 NormalData 获取
   String _meetingTitle = '';
+  String get _meetingTitleDisplay {
+    final title = _meetingTitle.isNotEmpty ? _meetingTitle : widget.meetingName;
+    return title.replaceAll('@', '-');
+  }
 
   // 会议状态
   int _meetStatus = 0; // 0=未开启, 1=进行中, 2=结束
@@ -48,6 +86,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   // 客户端列表
   List<Map<String, dynamic>> _clientList = [];
+
+  // 站点统计：WS_StationNum 返回的每个站点的出席/列席人数（按 Station/IP 索引）
+  Map<String, Map<String, int>> _stationStats = {};
 
   // MetricBoard 实例
   final MetricBoard _metricBoard = MetricBoard();
@@ -60,6 +101,17 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   // 加载状态
   bool _isLoading = false;
+
+  // 设备点位数据
+  FacilityRouteMap? _facilityRouteMap = FacilityRouteMap.demo();
+  String? _selectedFacilityId;
+
+  // 步骤进度状态
+  bool _isStepLoading = false;
+  bool _isStepUpdating = false;
+  List<_ProgressStepInfo> _progressSteps =
+      List<_ProgressStepInfo>.from(_kDefaultProgressSteps);
+  int _completedStepIndex = 0;
 
   @override
   void initState() {
@@ -85,6 +137,12 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     if (widget.meetId != null && widget.meetId!.isNotEmpty) {
       await _loadInitialMeetingInfo();
     }
+
+    // 无论是否有 WS 推送，先尝试通过接口获取一次设备点位图
+    await _loadDeviceRouteMap();
+
+    // 加载步骤进度
+    await _loadProgressStep();
     
     // 订阅指标数据流
     _subscribeMetrics();
@@ -100,6 +158,125 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       }
     } catch (e) {
       // 错误处理
+    }
+  }
+
+  Future<void> _loadProgressStep() async {
+    if (_isStepLoading) return;
+    if (!mounted) return;
+    setState(() {
+      _isStepLoading = true;
+    });
+    try {
+      final result =
+          await SccClientWrapper.queryProgressStep(meetID: widget.meetId);
+      if (result.isSuccess && result.data != null) {
+        final parsedSteps = _parseProgressSteps(result.data!.payload);
+        final effectiveSteps =
+            parsedSteps.isNotEmpty ? parsedSteps : _cloneDefaultProgressSteps();
+        final currentStepValue = result.data!.step;
+        final updatedSteps = effectiveSteps
+            .map(
+              (step) => step.copyWith(
+                executed: step.executed || step.step <= currentStepValue,
+              ),
+            )
+            .toList();
+        final matchedIndex =
+            updatedSteps.indexWhere((step) => step.step == currentStepValue);
+        final serverIndex = updatedSteps.isEmpty
+            ? 0
+            : (matchedIndex >= 0
+                ? matchedIndex
+                : (currentStepValue - 1).clamp(0, updatedSteps.length - 1));
+        if (mounted) {
+          setState(() {
+            _progressSteps = updatedSteps;
+            _completedStepIndex = serverIndex;
+          });
+        }
+      } else if (!result.isSuccess &&
+          result.msg.isNotEmpty &&
+          mounted) {
+        _showMessage(result.msg, isError: true);
+      }
+    } catch (e) {
+      if (mounted) {
+        _showMessage('加载步骤进度失败: $e', isError: true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isStepLoading = false;
+        });
+      }
+    }
+  }
+
+  Future<bool> _updateProgressStep(int newIndex) async {
+    print('217updateProgressStep: $newIndex');
+    if (!mounted) return false;
+    if (_isStepUpdating ||
+        newIndex < 0 ||
+        newIndex >= _progressSteps.length) {
+      return false;
+    }
+
+    setState(() {
+      _isStepUpdating = true;
+    });
+
+    try {
+      final targetStep = _progressSteps[newIndex].step;
+      final result = await SccClientWrapper.setProgressStep(
+        step: targetStep,
+        meetID: widget.meetId,
+      );
+      print('235result: $result');
+      if (result.isSuccess && result.data == true) {
+        if (mounted) {
+          setState(() {
+            _completedStepIndex = newIndex;
+            _progressSteps = _progressSteps
+                .map(
+                  (step) => step.copyWith(
+                    executed: step.step <= targetStep,
+                  ),
+                )
+                .toList();
+          });
+        }
+        return true;
+      } else {
+        final message =
+            result.msg.isNotEmpty ? result.msg : '更新步骤失败';
+        if (mounted) {
+          _showMessage(message, isError: true);
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        _showMessage('更新步骤异常: $e', isError: true);
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isStepUpdating = false;
+        });
+      }
+    }
+    return false;
+  }
+
+  Future<void> _loadDeviceRouteMap() async {
+    try {
+      final result =
+          await SccClientWrapper.queryDeviceRouteMap(meetID: widget.meetId);
+      if (result.isSuccess && result.data != null) {
+        _handleDeviceRouteData(result.data!);
+      }
+    } catch (_) {
+      // 忽略接口异常，等待后续 WS 推送
     }
   }
 
@@ -148,8 +325,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     _metricsSubscription = SccClientWrapper.subscribeMetricsData(
       metricBoard: _metricBoard,
       onData: (Map<String, dynamic> data, String channel) {
-        print('subscribeMetrics -> channel: $channel, data: $data');
-
+        final remark = data['remark']?.toString() ?? '';
         final bool looksLikeMeetInfo = channel == 'WS_MeetInfo' ||
             channel.isEmpty ||
             data.containsKey('Personnum') ||
@@ -162,9 +338,24 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                 ((data['data'] as Map).containsKey('CheckInSatus') ||
                     (data['data'] as Map).containsKey('NodeID')));
 
-        if (looksLikeCheckIn) {
-          print('WS_CheckInInfo payload detected: $data');
+        // 设备点位图：优先根据 channel 判断，其次再兜底看字段
+        final bool looksLikeDeviceRoute =
+            channel == 'DeviceRouteMap' ||
+            remark.contains('DeviceRoute') ||
+            remark.contains('RouteMap') ||
+            data.containsKey('RouteID') ||
+            (data['data'] is Map &&
+                ((data['data'] as Map).containsKey('RouteID') ||
+                    (data['data'] as Map).containsKey('RouteMapSettings')));
+
+        if (channel == 'WS_Client') {
+          _handleWsClient(data);
+        } else if (channel == 'WS_StationNum') {
+          _handleWsStationNum(data);
+        } else if (looksLikeCheckIn) {
           _handleCheckInInfo(data);
+        } else if (looksLikeDeviceRoute) {
+          _handleDeviceRouteData(data);
         } else if (looksLikeMeetInfo) {
           _handleMeetInfo(data);
         }
@@ -261,8 +452,6 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       if (nums != null && nums.isNotEmpty) {
         // 出席统计数据
         final personnum = _parseInt(nums['Personnum'] ?? 0);
-        // 只输出 Personnum
-        print(personnum);
         final personattendancenum = _parseInt(nums['Personattendancenum'] ?? 0);
         final personleavenum = _parseInt(nums['Personleavenum'] ?? 0);
         final notyet = personnum - personattendancenum; // 未到
@@ -329,11 +518,74 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     });
   }
 
+  // 处理 WS_Client：完整设备列表与当前状态
+  void _handleWsClient(Map<String, dynamic> data) {
+    if (data['code'] != 200) return;
+    final list = data['data'];
+    if (list is! List) return;
+
+    setState(() {
+      _clientList = list.map<Map<String, dynamic>>((item) {
+        final client = Map<String, dynamic>.from(item as Map);
+
+        // 根据 ClientStatus 设置 disabled
+        final status = client['ClientStatus'];
+        client['disabled'] = (status == 0 || status == 4);
+
+        // 根据 FacilityTypeName 与端口设置 ProcessType（与 _loadClientList 保持一致）
+        final facilityType = client['FacilityTypeName']?.toString() ?? '';
+        final ip = client['IP']?.toString() ?? '';
+        if (facilityType == '报到终端') {
+          if (ip.contains(':1030') || ip.endsWith('1030')) {
+            client['ProcessType'] = 'didian';
+          } else {
+            client['ProcessType'] = 'rack';
+          }
+        } else {
+          client['ProcessType'] = 'Client';
+        }
+
+        return client;
+      }).toList();
+
+      _updateDevicesList();
+    });
+  }
+
+  // 处理 WS_StationNum：每个站点的出席/列席人数
+  void _handleWsStationNum(Map<String, dynamic> data) {
+    if (data['code'] != 200) return;
+    final list = data['data'];
+    if (list is! List) return;
+
+    final Map<String, Map<String, int>> stats = {};
+    for (final item in list) {
+      if (item is! Map) continue;
+      final station = item['Station']?.toString();
+      if (station == null || station.isEmpty) continue;
+
+      final attend = _parseInt(item['AttendNum'] ?? 0);
+      final guest = _parseInt(item['SpecialNum'] ?? 0);
+      stats[station] = {
+        'attend': attend,
+        'guest': guest,
+      };
+    }
+
+    if (stats.isEmpty) return;
+
+    setState(() {
+      _stationStats = stats;
+      _updateDevicesList();
+    });
+  }
+
   // 更新设备列表
   void _updateDevicesList() {
     _devices = _clientList.map((client) {
       final processType = client['ProcessType'] ?? 'Server';
       final clientStatus = client['ClientStatus'] ?? 0;
+      final ip = client['IP']?.toString() ?? '';
       final stationName = client['StationName'] ?? '';
       
       // 根据 ProcessType 和 ClientStatus 确定状态
@@ -343,9 +595,15 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       int attend = 0;
       int guest = 0;
       if (processType == 'rack' || processType == 'Server') {
-        // 这里可以从其他数据源获取，暂时使用默认值
-        attend = client['attend'] ?? 0;
-        guest = client['guest'] ?? 0;
+        // 优先使用 WS_StationNum 提供的站点统计（按 IP 匹配 Station）
+        final stat = _stationStats[ip];
+        if (stat != null) {
+          attend = stat['attend'] ?? 0;
+          guest = stat['guest'] ?? 0;
+        } else {
+          attend = client['attend'] ?? 0;
+          guest = client['guest'] ?? 0;
+        }
       }
       
       return {
@@ -363,19 +621,24 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   // 根据 ClientStatus 获取状态文本
   String _getStatusFromClientStatus(int clientStatus, String processType) {
     // 对于报到终端/地垫终端，需要根据 CheckIn 状态实时展示
-    if (processType == 'Client' || processType == 'didian') {
+    if (processType == 'rack') {
       switch (clientStatus) {
-        case -3:
-          return '重报';
-        case -2:
-          return '报到';
-        case 3:
+        case 0:
+          return '空闲';
+        case 1:
+          return '联机';
+        case 2:
           return '工作';
-        case 5:
+        case 3:
           return '结束';
         case 4:
-        case 0:
           return '脱机';
+        case 5:
+          return '错卡';
+        case -2:
+          return '重报';
+        case -3:
+          return '报到';
         default:
           return '联机';
       }
@@ -385,15 +648,20 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     switch (clientStatus) {
       case 0:
         return '空闲';
-      case 3:
+      case 1:
+        return '联机';
+      case 2:
         return '工作';
-      case 4:
-      case 5:
+      case 3:
         return '结束';
+      case 4:
+      return '脱机';
+      case 5:
+        return '错卡';
       case -2:
-        return '报到';
-      case -3:
         return '重报';
+      case -3:
+        return '报到';
       default:
         return '空闲';
     }
@@ -503,10 +771,15 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       return;
     }
 
-    // 获取站点列表（从客户端列表）
+    // 获取站点列表（从客户端列表），仅包含 8084 端口的设备，按后端要求使用 IP 列表
     final stations = _clientList
-        .where((client) => client['StationName'] != null && client['StationName'].toString().isNotEmpty)
-        .map((client) => client['StationName'].toString())
+        .where((client) {
+          final ip = client['IP']?.toString() ?? '';
+          if (ip.isEmpty) return false;
+          // 仅保留端口为 8084 的设备（形如 192.168.0.10:8084 或结尾是 8084）
+          return ip.contains(':8084') || ip.endsWith('8084');
+        })
+        .map((client) => client['IP'].toString())
         .toList();
 
     if (stations.isEmpty) {
@@ -514,7 +787,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       return;
     }
 
-    // 显示站点选择对话框
+    // 显示站点选择对话框（展示 IP，实际上传的也是 IP 列表）
     final selectedStations = await showDialog<List<String>>(
       context: context,
       builder: (BuildContext context) {
@@ -667,6 +940,19 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     );
   }
 
+  void _handleDeviceRouteData(Map<String, dynamic> data) {
+    final payload =
+        data['data'] is Map ? data['data'] as Map<String, dynamic> : data;
+    try {
+      final routeMap = FacilityRouteMap.fromPayload(payload);
+      setState(() {
+        _facilityRouteMap = routeMap;
+      });
+    } catch (e) {
+      // 解析失败时忽略
+    }
+  }
+
   // 完全按照图片样式重新设计统计卡片
   Widget _buildStatCard(String title, Map<String, int> stats) {
     return Container(
@@ -758,30 +1044,14 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   // 其他方法保持不变...
   Widget _buildDeviceGrid() {
-    return Container(
-      width: double.infinity,
-      height: double.infinity,
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        image: DecorationImage(
-          image: AssetImage("assets/images/device_map.png"), // 设备点位图底图
-          fit: BoxFit.contain, // 保持比例并完整显示
-        ),
-        color: Colors.grey[100], // 背景色
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade300),
-      ),
-      // child: Center(
-      //   child: Text(
-      //     '设备点位图',
-      //     style: TextStyle(
-      //       fontFamily: 'FZXBYS',
-      //       fontSize: 24,
-      //       color: Colors.black54,
-      //       fontWeight: FontWeight.bold,
-      //     ),
-      //   ),
-      // ),
+    return DeviceMapWidget(
+      routeMap: _facilityRouteMap,
+      selectedGateName: _selectedFacilityId,
+      onCabinetTap: (facilityId) {
+        setState(() {
+          _selectedFacilityId = facilityId;
+        });
+      },
     );
   }
 
@@ -1306,14 +1576,18 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
               ),
               SizedBox(width: 12),
               OutlinedButton(
-                onPressed: () {
-                  // 刷新功能
-                },
+                onPressed: _isStepLoading ? null : _loadProgressStep,
                 style: OutlinedButton.styleFrom(
                   padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                   side: BorderSide(color: Colors.grey[400]!),
                 ),
-                child: Text('刷新'),
+                child: _isStepLoading
+                    ? SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text('刷新'),
               ),
             ],
           ),
@@ -1341,10 +1615,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                 onTap: _isMeetingStarted ? _handleEndMeeting : _handleStartMeeting,
               ),
               _buildFunctionButton(
-                '比业务流程',
+                '步骤进度',
                 Icons.compare_arrows,
                 color: Colors.white,
-                onTap: _handleEndMeeting,
+                onTap: _showStepProgressDialog,
               ),
               _buildFunctionButton(
                 '退出',
@@ -1382,6 +1656,344 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  void _showStepProgressDialog() {
+    final steps = _effectiveProgressSteps();
+    int tempIndex = steps.isEmpty
+        ? 0
+        : _completedStepIndex.clamp(0, steps.length - 1);
+    bool isModalUpdating = false;
+    String? modalError;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            Future<void> updateIndex(int newIndex) async {
+              final safeIndex = steps.isEmpty
+                  ? 0
+                  : newIndex.clamp(0, steps.length - 1);
+              if (safeIndex == tempIndex || isModalUpdating) {
+                return;
+              }
+              setModalState(() {
+                isModalUpdating = true;
+                modalError = null;
+              });
+              final success = await _updateProgressStep(safeIndex);
+              if (!mounted) return;
+              setModalState(() {
+                isModalUpdating = false;
+                if (success) {
+                  tempIndex = safeIndex;
+                } else {
+                  modalError = '同步失败，请稍后重试';
+                }
+              });
+            }
+
+            final currentTitle =
+                steps.isNotEmpty ? steps[tempIndex].title : '步骤';
+            final String statusText = (steps.isNotEmpty &&
+                    tempIndex < steps.length - 1)
+                ? '当前状态：$currentTitle 已完成，下一步是 ${steps[tempIndex + 1].title}'
+                : '当前状态：$currentTitle 已完成，流程已全部结束';
+
+            return AlertDialog(
+              insetPadding:
+                  const EdgeInsets.symmetric(horizontal: 260, vertical: 140),
+              title: const Text(
+                '步骤进度',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              content: SizedBox(
+                width: 520,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _buildStepProgressBar(tempIndex),
+                    if (isModalUpdating) ...[
+                      const SizedBox(height: 16),
+                      const LinearProgressIndicator(minHeight: 2),
+                    ],
+                    if (modalError != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        modalError!,
+                        style: const TextStyle(
+                          color: Colors.redAccent,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              actionsAlignment: MainAxisAlignment.spaceBetween,
+              actionsPadding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              actions: [
+                TextButton(
+                  onPressed: (!isModalUpdating && tempIndex > 0)
+                      ? () => updateIndex(tempIndex - 1)
+                      : null,
+                  child: const Text('← 上一步'),
+                ),
+                ElevatedButton(
+                  onPressed: (!isModalUpdating &&
+                          steps.isNotEmpty &&
+                          tempIndex < steps.length - 1)
+                      ? () => updateIndex(tempIndex + 1)
+                      : null,
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 28, vertical: 12),
+                    backgroundColor: const Color(0xFF1E88E5),
+                  ),
+                  child: const Text('下一步 →'),
+                ),
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                  },
+                  child: const Text('关闭'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  List<_ProgressStepInfo> _cloneDefaultProgressSteps() {
+    return _kDefaultProgressSteps.map((step) => step).toList();
+  }
+
+  List<_ProgressStepInfo> _parseProgressSteps(dynamic payload) {
+    dynamic normalized = payload;
+    if (normalized is String) {
+      final trimmed = normalized.trim();
+      try {
+        normalized = jsonDecode(trimmed);
+      } catch (_) {}
+    }
+
+    List<_ProgressStepInfo> extracted =
+        _extractProgressStepsFromSource(normalized);
+    if (extracted.isEmpty && normalized is Map<String, dynamic>) {
+      for (final key in ['data', 'steps', 'list', 'items', 'diagram']) {
+        if (normalized.containsKey(key)) {
+          extracted = _extractProgressStepsFromSource(normalized[key]);
+        }
+        if (extracted.isNotEmpty) break;
+      }
+    }
+
+    extracted.sort((a, b) => a.step.compareTo(b.step));
+    return extracted;
+  }
+
+  List<_ProgressStepInfo> _extractProgressStepsFromSource(dynamic source) {
+    if (source is String) {
+      try {
+        final decoded = jsonDecode(source);
+        return _extractProgressStepsFromSource(decoded);
+      } catch (_) {
+        return [];
+      }
+    }
+    if (source is List) {
+      return source
+          .whereType<Map>()
+          .map(_progressStepFromMap)
+          .whereType<_ProgressStepInfo>()
+          .toList();
+    }
+    if (source is Map) {
+      final info = _progressStepFromMap(source);
+      if (info != null) {
+        return [info];
+      }
+    }
+    return [];
+  }
+
+  _ProgressStepInfo? _progressStepFromMap(Map rawMap) {
+    final map = rawMap.map<String, dynamic>(
+      (key, value) => MapEntry(key.toString(), value),
+    );
+    final titleValue =
+        map['title'] ?? map['Title'] ?? map['name'] ?? map['Name'];
+    final String title =
+        (titleValue?.toString().isNotEmpty ?? false) ? titleValue.toString() : '';
+
+    final int stepValue = _parseInt(
+      map['step'] ?? map['Step'] ?? map['index'] ?? map['Index'],
+    );
+    if (title.isEmpty && stepValue <= 0) {
+      return null;
+    }
+
+    final step = stepValue <= 0 ? 1 : stepValue;
+    final executed = _parseBool(
+      map['executed'] ??
+          map['Executed'] ??
+          map['finished'] ??
+          map['Finished'] ??
+          map['status'],
+    );
+
+    return _ProgressStepInfo(
+      title: title.isNotEmpty ? title : '步骤$step',
+      step: step,
+      executed: executed,
+    );
+  }
+
+  bool _parseBool(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      final lower = value.toLowerCase();
+      return lower == 'true' ||
+          lower == '1' ||
+          lower == 'yes' ||
+          lower == 'y' ||
+          lower == '完成' ||
+          lower == '已完成';
+    }
+    return false;
+  }
+
+  List<_ProgressStepInfo> _effectiveProgressSteps() {
+    return _progressSteps.isNotEmpty
+        ? _progressSteps
+        : _cloneDefaultProgressSteps();
+  }
+
+  Widget _buildStepProgressBar(int completedIndex) {
+    final steps = _effectiveProgressSteps();
+    if (steps.isEmpty) return const SizedBox.shrink();
+
+    final safeCompleted =
+        completedIndex.clamp(0, steps.length - 1);
+    final bool isCrowded = steps.length > 5;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // 顶部：节点 + 只在节点之间的线条（首尾线条隐藏但保留占位，保证文字与圆圈垂直对齐）
+        Row(
+          children: List.generate(steps.length, (index) {
+            final bool showLeft = index > 0;
+            final bool showRight = index < steps.length - 1;
+            final bool isLeftSegmentCompleted = index - 1 < safeCompleted;
+            final bool isRightSegmentCompleted = index < safeCompleted;
+
+            return Expanded(
+              child: Row(
+                children: [
+                  // 左侧线段（第一个节点使用透明颜色保留占位）
+                  Expanded(
+                    child: Container(
+                      height: 3,
+                      margin: const EdgeInsets.only(right: 6),
+                      color: showLeft
+                          ? (isLeftSegmentCompleted
+                              ? const Color(0xFF2BB56F)
+                              : const Color(0xFFE0E0E0))
+                          : Colors.transparent,
+                    ),
+                  ),
+                  // 节点
+                  _buildStepNode(index, safeCompleted),
+                  // 右侧线段（最后一个节点使用透明颜色保留占位）
+                  Expanded(
+                    child: Container(
+                      height: 3,
+                      margin: const EdgeInsets.only(left: 6),
+                      color: showRight
+                          ? (isRightSegmentCompleted
+                              ? const Color(0xFF2BB56F)
+                              : const Color(0xFFE0E0E0))
+                          : Colors.transparent,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ),
+        const SizedBox(height: 10),
+        // 下方：每个步骤的文字标签
+        Row(
+          children: List.generate(steps.length, (index) {
+            final bool isCompleted = index <= safeCompleted;
+            final bool isNext = index == safeCompleted + 1;
+            final Color textColor = isCompleted
+                ? Colors.black87
+                : (isNext ? const Color(0xFF1E88E5) : Colors.black54);
+
+            return Expanded(
+              child: Text(
+                steps[index].title,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: isCrowded ? 12 : 14,
+                  fontWeight:
+                      isCompleted ? FontWeight.w600 : FontWeight.w500,
+                  color: textColor,
+                ),
+              ),
+            );
+          }),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStepNode(int index, int completedIndex) {
+    final steps = _effectiveProgressSteps();
+    if (steps.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final safeIndex = index.clamp(0, steps.length - 1);
+    final bool isCrowded = steps.length > 5;
+    final bool isCompleted = safeIndex <= completedIndex;
+    final bool isNext = safeIndex == completedIndex + 1;
+    final Color borderColor = isCompleted
+        ? const Color(0xFF2BB56F)
+        : (isNext ? const Color(0xFF1E88E5) : const Color(0xFFB0BEC5));
+    final Color fillColor = isCompleted ? borderColor : Colors.white;
+    final Color textColor =
+        isCompleted ? Colors.white : borderColor;
+
+    final double size = isCrowded ? 30 : 38;
+
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: fillColor,
+        borderRadius: BorderRadius.circular(size / 2),
+        border: Border.all(color: borderColor, width: 2),
+      ),
+      child: Center(
+        child: isCompleted
+            ? const Icon(Icons.check, color: Colors.white, size: 20)
+            : Text(
+                '${index + 1}',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: textColor,
+                ),
+              ),
       ),
     );
   }
@@ -1517,7 +2129,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                       padding: const EdgeInsets.symmetric(vertical: 1),
                       child: Center(
                         child: Text(
-                          _meetingTitle.isNotEmpty ? _meetingTitle : widget.meetingName,
+                          _meetingTitleDisplay,
                           style: TextStyle(
                             fontFamily: 'FZXBYS',
                             fontSize: 28,

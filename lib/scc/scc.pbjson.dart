@@ -95,12 +95,12 @@ final $typed_data.Uint8List reportCheckFailedReqDescriptor = $convert.base64Deco
 const ImportReq$json = const {
   '1': 'ImportReq',
   '2': const [
-    const {'1': 'file', '3': 1, '4': 1, '5': 12, '10': 'file'},
+    const {'1': 'file', '3': 1, '4': 1, '5': 9, '10': 'file'},
   ],
 };
 
 /// Descriptor for `ImportReq`. Decode as a `google.protobuf.DescriptorProto`.
-final $typed_data.Uint8List importReqDescriptor = $convert.base64Decode('CglJbXBvcnRSZXESEgoEZmlsZRgBIAEoDFIEZmlsZQ==');
+final $typed_data.Uint8List importReqDescriptor = $convert.base64Decode('CglJbXBvcnRSZXESEgoEZmlsZRgBIAEoCVIEZmlsZQ==');
 @$core.Deprecated('Use queryReqDescriptor instead')
 const QueryReq$json = const {
   '1': 'QueryReq',
@@ -252,3 +252,26 @@ const MetricMsg$json = const {
 
 /// Descriptor for `MetricMsg`. Decode as a `google.protobuf.DescriptorProto`.
 final $typed_data.Uint8List metricMsgDescriptor = $convert.base64Decode('CglNZXRyaWNNc2cSEgoEdHlwZRgBIAEoBVIEdHlwZRIYCgdjaGFubmVsGAIgASgJUgdjaGFubmVsEhIKBGRhdGEYAyABKAlSBGRhdGESHAoJdGltZXN0YW1wGAQgASgDUgl0aW1lc3RhbXA=');
+@$core.Deprecated('Use signInClientReqDescriptor instead')
+const SignInClientReq$json = const {
+  '1': 'SignInClientReq',
+  '2': const [
+    const {'1': 'preq', '3': 1, '4': 1, '5': 11, '6': '.scc.PType', '9': 0, '10': 'preq'},
+  ],
+  '8': const [
+    const {'1': 'req'},
+  ],
+};
+
+/// Descriptor for `SignInClientReq`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List signInClientReqDescriptor = $convert.base64Decode('Cg9TaWduSW5DbGllbnRSZXESIAoEcHJlcRgBIAEoCzIKLnNjYy5QVHlwZUgAUgRwcmVxQgUKA3JlcQ==');
+@$core.Deprecated('Use pTypeDescriptor instead')
+const PType$json = const {
+  '1': 'PType',
+  '2': const [
+    const {'1': 'type', '3': 1, '4': 1, '5': 9, '10': 'type'},
+  ],
+};
+
+/// Descriptor for `PType`. Decode as a `google.protobuf.DescriptorProto`.
+final $typed_data.Uint8List pTypeDescriptor = $convert.base64Decode('CgVQVHlwZRISCgR0eXBlGAEgASgJUgR0eXBl');

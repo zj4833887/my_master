@@ -40,7 +40,7 @@ message ReportCheckFailedReq {
 }
 
 message ImportReq {
-  bytes file = 1; // 文件内容
+  string file = 1; // 文件内容
 }
 
 // 查询终端参数
@@ -193,4 +193,18 @@ message MetricMsg {
 service MetricApi {
   rpc ping(MetricReq) returns(MetricConfirm);
   rpc subscribeMetrics(MetricReq) returns(stream MetricMsg);
+}
+
+message SignInClientReq {
+  oneof req {
+      PType preq = 1;
+  }
+}
+
+message PType {
+  string type = 1;
+}
+
+service SignInClientApi {
+  rpc setProcessType(SignInClientReq) returns(GResponse);
 }
