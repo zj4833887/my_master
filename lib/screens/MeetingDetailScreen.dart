@@ -99,12 +99,19 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   // 设备数据（从客户端列表生成）
   List<Map<String, dynamic>> _devices = [];
 
+  // 数据检查相关
+  Timer? _dataCheckTimer;
+  List<Map<String, dynamic>> _dataCheckResults = [];
+
   // 加载状态
   bool _isLoading = false;
 
-  // 设备点位数据
-  FacilityRouteMap? _facilityRouteMap = FacilityRouteMap.demo();
-  String? _selectedFacilityId;
+  // 设备点位数据（单独的 notifier，避免其他 setState 影响底图）
+  final ValueNotifier<FacilityRouteMap?> _routeMapNotifier =
+      ValueNotifier<FacilityRouteMap?>(FacilityRouteMap.demo());
+  final ValueNotifier<String?> _selectedFacilityIdNotifier =
+      ValueNotifier<String?>(null);
+  String? _lastRouteMapSignature; // 避免相同数据重复刷新造成闪烁
 
   // 步骤进度状态
   bool _isStepLoading = false;
@@ -124,7 +131,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   @override
   void dispose() {
     _tabController.dispose();
+    _routeMapNotifier.dispose();
+    _selectedFacilityIdNotifier.dispose();
     _metricsSubscription?.cancel();
+    _dataCheckTimer?.cancel();
     super.dispose();
   }
 
@@ -176,23 +186,24 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
             parsedSteps.isNotEmpty ? parsedSteps : _cloneDefaultProgressSteps();
         final currentStepValue = result.data!.step;
         final updatedSteps = effectiveSteps
-            .map(
-              (step) => step.copyWith(
-                executed: step.executed || step.step <= currentStepValue,
-              ),
-            )
+            .map((step) => step.copyWith(executed: step.executed))
             .toList();
         final matchedIndex =
             updatedSteps.indexWhere((step) => step.step == currentStepValue);
+        final lastExecutedIndex =
+            updatedSteps.lastIndexWhere((step) => step.executed);
         final serverIndex = updatedSteps.isEmpty
             ? 0
             : (matchedIndex >= 0
                 ? matchedIndex
                 : (currentStepValue - 1).clamp(0, updatedSteps.length - 1));
+        final effectiveCompletedIndex = lastExecutedIndex >= 0
+            ? lastExecutedIndex
+            : serverIndex.clamp(0, updatedSteps.length - 1);
         if (mounted) {
           setState(() {
             _progressSteps = updatedSteps;
-            _completedStepIndex = serverIndex;
+            _completedStepIndex = effectiveCompletedIndex;
           });
         }
       } else if (!result.isSuccess &&
@@ -234,18 +245,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       );
       print('235result: $result');
       if (result.isSuccess && result.data == true) {
-        if (mounted) {
-          setState(() {
-            _completedStepIndex = newIndex;
-            _progressSteps = _progressSteps
-                .map(
-                  (step) => step.copyWith(
-                    executed: step.step <= targetStep,
-                  ),
-                )
-                .toList();
-          });
-        }
+        // 成功后重新拉取，以服务器状态为准
+        await _loadProgressStep();
         return true;
       } else {
         final message =
@@ -353,9 +354,17 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         } else if (channel == 'WS_StationNum') {
           _handleWsStationNum(data);
         } else if (looksLikeCheckIn) {
+          _logPayloadKeysBrief('CheckIn', channel, remark, data);
           _handleCheckInInfo(data);
         } else if (looksLikeDeviceRoute) {
-          _handleDeviceRouteData(data);
+          // 仅当 channel 确认是 DeviceRouteMap 时更新底图，其他推送不触发刷新
+          if (channel == 'DeviceRouteMap') {
+            debugPrint('[DeviceRouteMap] received at ${DateTime.now().toIso8601String()}');
+            _logPayloadKeysBrief('DeviceRouteMap', channel, remark, data);
+            _handleDeviceRouteData(data);
+          } else {
+            // 忽略非 DeviceRouteMap 频道的“像点位图”的数据，避免闪烁
+          }
         } else if (looksLikeMeetInfo) {
           _handleMeetInfo(data);
         }
@@ -485,7 +494,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   // 处理报到信息 (WS_CheckInInfo)
   void _handleCheckInInfo(Map<String, dynamic> data) {
-    print('WS_CheckInInfo: $data');
+    final inner = data['data'] is Map ? data['data'] as Map<String, dynamic> : {};
+    print(
+        '[CheckIn] parsed NodeID=${inner['NodeID']} CheckInSatus=${inner['CheckInSatus']} raw=$data');
     if (data['code'] != 200) return;
 
     final nodeID = data['data']?['NodeID'];
@@ -549,7 +560,51 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       }).toList();
 
       _updateDevicesList();
+      
+      // 如果正在轮询检查状态，更新检查结果
+      if (_dataCheckTimer != null && _dataCheckTimer!.isActive) {
+        _updateDataCheckResults();
+      }
     });
+  }
+
+  // 更新数据检查结果（从 _clientList 中提取）
+  void _updateDataCheckResults() {
+    final checkingDevices = _clientList.where((client) {
+      final status = client['DataCheckStatus'];
+      return status != null && status != 0;
+    }).toList();
+    
+    setState(() {
+      _dataCheckResults.clear();
+      for (var device in checkingDevices) {
+        final remark = device['Remark']?.toString() ?? '';
+        if (remark.isNotEmpty) {
+          try {
+            final remarkData = jsonDecode(remark) as Map<String, dynamic>;
+            remarkData['StationName'] = device['StationName'] ?? device['IP'] ?? '';
+            _dataCheckResults.add(remarkData);
+          } catch (e) {
+            // 解析失败，跳过
+          }
+        }
+      }
+    });
+    
+    // 检查是否所有设备都已完成检查（DataCheckStatus !== 1）
+    final allCompleted = checkingDevices.isEmpty || checkingDevices.every((device) {
+      final status = device['DataCheckStatus'];
+      return status != null && status != 1;
+    });
+    
+    if (allCompleted && _dataCheckTimer != null && _dataCheckTimer!.isActive) {
+      _dataCheckTimer?.cancel();
+      _dataCheckTimer = null;
+      _showDataCheckFinalResults();
+      setState(() {
+        _isLoading = false;
+      });
+    }
   }
 
   // 处理 WS_StationNum：每个站点的出席/列席人数
@@ -586,6 +641,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       final processType = client['ProcessType'] ?? 'Server';
       final clientStatus = client['ClientStatus'] ?? 0;
       final ip = client['IP']?.toString() ?? '';
+      final facilityId = client['FacilityID'] ?? client['facilityId'];
       final stationName = client['StationName'] ?? '';
       
       // 根据 ProcessType 和 ClientStatus 确定状态
@@ -613,6 +669,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         'attend': attend,
         'guest': guest,
         'NodeID': client['NodeID'],
+        'FacilityID': facilityId,
+        'IP': ip,
         'ClientStatus': clientStatus,
       };
     }).toList();
@@ -835,21 +893,44 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       return;
     }
 
-    // 显示数据检查参数输入对话框
-    final result = await showDialog<Map<String, String>>(
+    // 获取站点列表（从客户端列表），仅包含 8084 端口的设备，按后端要求使用 IP 列表
+    final stations = _clientList
+        .where((client) {
+          final ip = client['IP']?.toString() ?? '';
+          if (ip.isEmpty) return false;
+          // 仅保留端口为 8084 的设备（形如 192.168.0.10:8084 或结尾是 8084）
+          return ip.contains(':8084') || ip.endsWith('8084');
+        })
+        .map((client) => client['IP'].toString())
+        .toList();
+
+    if (stations.isEmpty) {
+      _showMessage('没有可用的站点', isError: true);
+      return;
+    }
+
+    // 显示数据检查对话框（包含设备选择和表选择）
+    final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (BuildContext context) {
-        return _DataCheckDialog();
+        return _DataCheckDialog(
+          stations: stations,
+        );
       },
     );
 
     if (result == null) return;
 
-    final stations = result['stations'] ?? '';
-    final tables = result['tables'] ?? '';
+    final selectedStations = result['stations'] as List<String>? ?? [];
+    final selectedTables = result['tables'] as List<String>? ?? [];
 
-    if (stations.isEmpty || tables.isEmpty) {
-      _showMessage('站点和表名不能为空', isError: true);
+    if (selectedStations.isEmpty) {
+      _showMessage('请至少选择一个设备', isError: true);
+      return;
+    }
+
+    if (selectedTables.isEmpty) {
+      _showMessage('请至少选择一个表', isError: true);
       return;
     }
 
@@ -857,26 +938,133 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
     setState(() {
       _isLoading = true;
+      _dataCheckResults = []; // 清空之前的结果
     });
 
     try {
+      print('检查开始');
+      // 1. 先结束之前的检查
+      await SccClientWrapper.endDatabaseCheck();
+      print('结束检查');
+      // 2. 显示开始检查的消息
+      _showMessage('开始校验', isError: false);
+      
+      // 3. 开始新的检查
+      final stationsStr = selectedStations.join(',');
+      final tablesStr = selectedTables.join(',');
       final checkResult = await SccClientWrapper.databaseCheck(
         meetID: widget.meetId!,
-        stations: stations,
-        tables: tables,
+        stations: stationsStr,
+        tables: tablesStr,
       );
+      
       if (checkResult.isSuccess) {
-        _showMessage('数据检查成功');
+        // 4. 开始轮询检查状态
+        _startDataCheckPolling();
       } else {
         _showMessage(checkResult.msg.isNotEmpty ? checkResult.msg : '数据检查失败', isError: true);
+        setState(() {
+          _isLoading = false;
+        });
       }
     } catch (e) {
       _showMessage('操作失败: $e', isError: true);
-    } finally {
       setState(() {
         _isLoading = false;
       });
     }
+  }
+
+  // 开始轮询数据检查状态
+  void _startDataCheckPolling() {
+    // 先清除之前的定时器
+    _dataCheckTimer?.cancel();
+    
+    _dataCheckTimer = Timer.periodic(Duration(seconds: 1), (timer) {
+      // 过滤出正在检查或已完成的设备（DataCheckStatus != 0）
+      final checkingDevices = _clientList.where((client) {
+        final status = client['DataCheckStatus'];
+        return status != null && status != 0;
+      }).toList();
+      
+      if (checkingDevices.isEmpty) {
+        // 没有检查中的设备，停止轮询
+        timer.cancel();
+        _dataCheckTimer = null;
+        
+        // 显示检查结果
+        _showDataCheckFinalResults();
+        setState(() {
+          _isLoading = false;
+        });
+        return;
+      }
+      
+      // 处理检查结果
+      setState(() {
+        _dataCheckResults.clear();
+        for (var device in checkingDevices) {
+          final remark = device['Remark']?.toString() ?? '';
+          if (remark.isNotEmpty) {
+            try {
+              final remarkData = jsonDecode(remark) as Map<String, dynamic>;
+              remarkData['StationName'] = device['StationName'] ?? device['IP'] ?? '';
+              _dataCheckResults.add(remarkData);
+            } catch (e) {
+              // 解析失败，跳过
+            }
+          }
+        }
+      });
+      
+      // 检查是否所有设备都已完成检查（DataCheckStatus !== 1）
+      final allCompleted = checkingDevices.every((device) {
+        final status = device['DataCheckStatus'];
+        return status != null && status != 1;
+      });
+      
+      if (allCompleted) {
+        // 所有设备检查完成，停止轮询
+        timer.cancel();
+        _dataCheckTimer = null;
+        
+        // 显示检查结果
+        _showDataCheckFinalResults();
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    });
+  }
+
+  // 显示数据检查最终结果
+  void _showDataCheckFinalResults() {
+    String resultText = '';
+    
+    if (_dataCheckResults.isEmpty) {
+      resultText = '检查完成，但未返回详细数据';
+    } else {
+      // 格式化显示所有检查结果
+      for (var i = 0; i < _dataCheckResults.length; i++) {
+        final result = _dataCheckResults[i];
+        final stationName = result['StationName'] ?? '未知站点';
+        resultText += '站点: $stationName\n';
+        
+        // 将结果对象转换为可读的字符串
+        result.forEach((key, value) {
+          if (key != 'StationName') {
+            resultText += '  $key: $value\n';
+          }
+        });
+        resultText += '\n';
+      }
+    }
+    
+    _showDataCheckResult(
+      title: '数据检查完成',
+      result: resultText,
+      isSuccess: true,
+    );
   }
 
   // 文件选取
@@ -928,6 +1116,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   // 显示消息
   void _showMessage(String message, {bool isError = false}) {
+    print('显示消息: $context');
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -940,17 +1129,250 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     );
   }
 
+  // 显示数据检查结果
+  void _showDataCheckResult({
+    required String title,
+    required String result,
+    required bool isSuccess,
+  }) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(
+                isSuccess ? Icons.check_circle : Icons.error,
+                color: isSuccess ? Colors.green : Colors.red,
+                size: 24,
+              ),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontFamily: 'FZXBYS',
+                    color: isSuccess ? Colors.green : Colors.red,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: Container(
+            width: double.maxFinite,
+            constraints: BoxConstraints(maxHeight: 400),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (result.isNotEmpty) ...[
+                    Text(
+                      '检查结果：',
+                      style: TextStyle(
+                        fontFamily: 'FZXBYS',
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
+                    ),
+                    SizedBox(height: 8),
+                    Container(
+                      width: double.infinity,
+                      padding: EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade100,
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: SelectableText(
+                        result,
+                        style: TextStyle(
+                          fontFamily: 'FZXBYS',
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ] else ...[
+                    Text(
+                      '检查完成',
+                      style: TextStyle(
+                        fontFamily: 'FZXBYS',
+                        fontSize: 14,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text('确定', style: TextStyle(fontFamily: 'FZXBYS')),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   void _handleDeviceRouteData(Map<String, dynamic> data) {
     final payload =
         data['data'] is Map ? data['data'] as Map<String, dynamic> : data;
     try {
+      // 仅输出字段名，避免大数据刷屏
+      _debugPrintPayloadKeys(payload);
       final routeMap = FacilityRouteMap.fromPayload(payload);
-      setState(() {
-        _facilityRouteMap = routeMap;
-      });
+      // 如果内容与当前一致，直接返回，避免闪烁
+      final currentRouteMap = _routeMapNotifier.value;
+      if (currentRouteMap != null &&
+          _isSameRouteMap(routeMap, currentRouteMap)) {
+        debugPrint('[DeviceRouteMap] skip refresh: identical to current');
+        return;
+      }
+
+      // 计算签名，仅包含影响渲染的关键信息，避免相同数据反复刷新
+      final newSig = _computeRouteMapSignature(routeMap);
+      if (newSig != null && newSig == _lastRouteMapSignature) {
+        debugPrint('[DeviceRouteMap] skip refresh: same signature');
+        return;
+      }
+
+      print(
+          '[DeviceRouteMap] parsed routeId=${routeMap.routeId} meetId=${routeMap.meetId} facilities=${routeMap.settings.facilities.length}');
+      _routeMapNotifier.value = routeMap;
+      _lastRouteMapSignature = newSig;
     } catch (e) {
       // 解析失败时忽略
     }
+  }
+
+  void _logPayloadKeysBrief(
+    String tag,
+    String channel,
+    String remark,
+    Map<String, dynamic> data,
+  ) {
+    try {
+      final topKeys = data.keys.join(', ');
+      String nestedKeys = '';
+      final nested = data['data'];
+      if (nested is Map) {
+        nestedKeys = nested.keys.join(', ');
+      }
+      debugPrint(
+        '[$tag] channel=$channel remark=$remark keys=[$topKeys] data.keys=[$nestedKeys]',
+      );
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  void _debugPrintPayloadKeys(Map<String, dynamic> payload) {
+    try {
+      debugPrint('[DeviceRouteMap] payload keys: ${payload.keys.join(', ')}');
+      final settingsList = payload['RouteMapSettings'];
+      if (settingsList is List && settingsList.isNotEmpty && settingsList.first is Map) {
+        final first = settingsList.first as Map;
+        debugPrint(
+          '[DeviceRouteMap] RouteMapSettings[0] keys: ${(first.keys).join(', ')}',
+        );
+      }
+      final nestedData = payload['data'];
+      if (nestedData is Map) {
+        debugPrint('[DeviceRouteMap] data keys: ${nestedData.keys.join(', ')}');
+      }
+    } catch (_) {
+      // 忽略调试打印异常
+    }
+  }
+
+  String? _computeRouteMapSignature(FacilityRouteMap map) {
+    try {
+      final facilitiesSig = _sortedFacilities(map.settings.facilities);
+      final sigObj = {
+        'routeId': map.routeId,
+        'bgPath': map.settings.bgPath.trim(),
+        'bgLen': map.settings.bgBytes?.length ?? 0,
+        'canvas': [
+          _round6(map.settings.canvasSize.width),
+          _round6(map.settings.canvasSize.height),
+        ],
+        'fac': facilitiesSig,
+      };
+      return jsonEncode(sigObj);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  double _round6(double value) =>
+      double.parse(value.toStringAsFixed(6));
+
+  List<Map<String, dynamic>> _sortedFacilities(List<FacilityPoint> list) {
+    return list
+        .map((f) => {
+              'id': f.facilityId,
+              't': f.facilityType.name,
+              'x': _round6(f.x),
+              'y': _round6(f.y),
+              'ip': f.ip,
+              'cam': f.cameraUri,
+            })
+        .toList()
+      ..sort((a, b) => (a['id'] as String).compareTo(b['id'] as String));
+  }
+
+  bool _isSameRouteMap(FacilityRouteMap a, FacilityRouteMap b) {
+    try {
+      if (a.routeId != b.routeId) {
+        debugPrint('[DeviceRouteMap] diff: routeId');
+        return false;
+      }
+      if (a.settings.bgPath.trim() != b.settings.bgPath.trim()) {
+        debugPrint('[DeviceRouteMap] diff: bgPath');
+        return false;
+      }
+      if ((a.settings.bgBytes?.length ?? 0) !=
+          (b.settings.bgBytes?.length ?? 0)) {
+        debugPrint('[DeviceRouteMap] diff: bgBytes len');
+        return false;
+      }
+      if (_round6(a.settings.canvasSize.width) !=
+          _round6(b.settings.canvasSize.width)) {
+        debugPrint('[DeviceRouteMap] diff: canvas width');
+        return false;
+      }
+      if (_round6(a.settings.canvasSize.height) !=
+          _round6(b.settings.canvasSize.height)) {
+        debugPrint('[DeviceRouteMap] diff: canvas height');
+        return false;
+      }
+      final facA = _sortedFacilities(a.settings.facilities);
+      final facB = _sortedFacilities(b.settings.facilities);
+      if (facA.length != facB.length) {
+        debugPrint('[DeviceRouteMap] diff: facilities length');
+        return false;
+      }
+      for (var i = 0; i < facA.length; i++) {
+        if (!_shallowMapEquals(facA[i], facB[i])) {
+          debugPrint('[DeviceRouteMap] diff: facility ${facA[i]} vs ${facB[i]}');
+          return false;
+        }
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  bool _shallowMapEquals(Map<String, dynamic> a, Map<String, dynamic> b) {
+    if (a.length != b.length) return false;
+    for (final key in a.keys) {
+      if (!b.containsKey(key)) return false;
+      if (a[key] != b[key]) return false;
+    }
+    return true;
   }
 
   // 完全按照图片样式重新设计统计卡片
@@ -1044,13 +1466,61 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   // 其他方法保持不变...
   Widget _buildDeviceGrid() {
-    return DeviceMapWidget(
-      routeMap: _facilityRouteMap,
-      selectedGateName: _selectedFacilityId,
-      onCabinetTap: (facilityId) {
-        setState(() {
-          _selectedFacilityId = facilityId;
-        });
+    // 创建设备状态映射：facilityId -> status
+    // 通过设备名称/NodeID/FacilityID/IP 匹配
+    final Map<String, String> deviceStatusMap = {};
+    final Map<String, bool> port1030Map = {};
+    final Map<String, bool> port8084Map = {};
+    for (var device in _devices) {
+      final deviceName = device['name']?.toString() ?? '';
+      final deviceStatus = device['status']?.toString() ?? '';
+      final nodeId = device['NodeID'];
+      final facilityId = device['FacilityID'];
+      final ip = device['IP']?.toString();
+
+      final bool isPort1030 = ip != null && ip.trim().endsWith(':1030');
+      final bool isPort8084 = ip != null && ip.trim().endsWith(':8084');
+
+      if (deviceName.isNotEmpty && deviceStatus.isNotEmpty) {
+        deviceStatusMap[deviceName] = deviceStatus;
+        if (isPort1030) port1030Map[deviceName] = true;
+        if (isPort8084) port8084Map[deviceName] = true;
+      }
+      if (nodeId != null && deviceStatus.isNotEmpty) {
+        deviceStatusMap[nodeId.toString()] = deviceStatus;
+        if (isPort1030) port1030Map[nodeId.toString()] = true;
+        if (isPort8084) port8084Map[nodeId.toString()] = true;
+      }
+      if (facilityId != null && deviceStatus.isNotEmpty) {
+        deviceStatusMap[facilityId.toString()] = deviceStatus;
+        if (isPort1030) port1030Map[facilityId.toString()] = true;
+        if (isPort8084) port8084Map[facilityId.toString()] = true;
+      }
+      if (ip != null && ip.isNotEmpty && deviceStatus.isNotEmpty) {
+        deviceStatusMap[ip] = deviceStatus;
+        if (isPort1030) port1030Map[ip] = true;
+        if (isPort8084) port8084Map[ip] = true;
+      }
+    }
+    
+    return ValueListenableBuilder<FacilityRouteMap?>(
+      valueListenable: _routeMapNotifier,
+      builder: (context, map, _) {
+        return ValueListenableBuilder<String?>(
+          valueListenable: _selectedFacilityIdNotifier,
+          builder: (context, selectedId, __) {
+            return DeviceMapWidget(
+              routeMap: map,
+              selectedGateName: selectedId,
+              deviceStatusMap: deviceStatusMap,
+              port8084Map: port8084Map,
+              port1030Map: port1030Map,
+              onCabinetTap: (facilityId) {
+                _selectedFacilityIdNotifier.value = facilityId;
+              },
+            );
+          },
+        );
       },
     );
   }
@@ -1615,7 +2085,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                 onTap: _isMeetingStarted ? _handleEndMeeting : _handleStartMeeting,
               ),
               _buildFunctionButton(
-                '步骤进度',
+                '业务流程',
                 Icons.compare_arrows,
                 color: Colors.white,
                 onTap: _showStepProgressDialog,
@@ -1696,18 +2166,11 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
               });
             }
 
-            final currentTitle =
-                steps.isNotEmpty ? steps[tempIndex].title : '步骤';
-            final String statusText = (steps.isNotEmpty &&
-                    tempIndex < steps.length - 1)
-                ? '当前状态：$currentTitle 已完成，下一步是 ${steps[tempIndex + 1].title}'
-                : '当前状态：$currentTitle 已完成，流程已全部结束';
-
             return AlertDialog(
               insetPadding:
                   const EdgeInsets.symmetric(horizontal: 260, vertical: 140),
               title: const Text(
-                '步骤进度',
+                '业务流程',
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               content: SizedBox(
@@ -1883,6 +2346,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
     final safeCompleted =
         completedIndex.clamp(0, steps.length - 1);
+    final lastExecutedIndex = steps.lastIndexWhere((s) => s.executed);
+    final activeIndex = lastExecutedIndex >= 0
+        ? lastExecutedIndex.clamp(0, steps.length - 1)
+        : safeCompleted;
     final bool isCrowded = steps.length > 5;
 
     return Column(
@@ -1893,8 +2360,12 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           children: List.generate(steps.length, (index) {
             final bool showLeft = index > 0;
             final bool showRight = index < steps.length - 1;
-            final bool isLeftSegmentCompleted = index - 1 < safeCompleted;
-            final bool isRightSegmentCompleted = index < safeCompleted;
+            final bool isLeftSegmentCompleted = showLeft &&
+                steps[index - 1].executed &&
+                steps[index].executed;
+            final bool isRightSegmentCompleted = showRight &&
+                steps[index].executed &&
+                steps[index + 1].executed;
 
             return Expanded(
               child: Row(
@@ -1912,7 +2383,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                     ),
                   ),
                   // 节点
-                  _buildStepNode(index, safeCompleted),
+                  _buildStepNode(index, activeIndex, steps),
                   // 右侧线段（最后一个节点使用透明颜色保留占位）
                   Expanded(
                     child: Container(
@@ -1934,11 +2405,11 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         // 下方：每个步骤的文字标签
         Row(
           children: List.generate(steps.length, (index) {
-            final bool isCompleted = index <= safeCompleted;
-            final bool isNext = index == safeCompleted + 1;
+            final bool isCompleted = steps[index].executed;
+            final bool isActive = index == activeIndex;
             final Color textColor = isCompleted
                 ? Colors.black87
-                : (isNext ? const Color(0xFF1E88E5) : Colors.black54);
+                : (isActive ? const Color(0xFF1E88E5) : Colors.black54);
 
             return Expanded(
               child: Text(
@@ -1958,21 +2429,24 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     );
   }
 
-  Widget _buildStepNode(int index, int completedIndex) {
-    final steps = _effectiveProgressSteps();
+  Widget _buildStepNode(
+    int index,
+    int activeIndex,
+    List<_ProgressStepInfo> steps,
+  ) {
     if (steps.isEmpty) {
       return const SizedBox.shrink();
     }
     final safeIndex = index.clamp(0, steps.length - 1);
     final bool isCrowded = steps.length > 5;
-    final bool isCompleted = safeIndex <= completedIndex;
-    final bool isNext = safeIndex == completedIndex + 1;
+    final step = steps[safeIndex];
+    final bool isCompleted = step.executed;
+    final bool isActive = safeIndex == activeIndex;
     final Color borderColor = isCompleted
         ? const Color(0xFF2BB56F)
-        : (isNext ? const Color(0xFF1E88E5) : const Color(0xFFB0BEC5));
+        : (isActive ? const Color(0xFF1E88E5) : const Color(0xFFB0BEC5));
     final Color fillColor = isCompleted ? borderColor : Colors.white;
-    final Color textColor =
-        isCompleted ? Colors.white : borderColor;
+    final Color textColor = isCompleted ? Colors.white : borderColor;
 
     final double size = isCrowded ? 30 : 38;
 
@@ -2482,51 +2956,145 @@ class _StationSelectionDialogState extends State<_StationSelectionDialog> {
   }
 }
 
-// 数据检查参数输入对话框
+// 数据检查对话框（包含设备选择和表选择）
 class _DataCheckDialog extends StatefulWidget {
+  final List<String> stations;
+
+  const _DataCheckDialog({
+    required this.stations,
+  });
+
   @override
   State<_DataCheckDialog> createState() => _DataCheckDialogState();
 }
 
 class _DataCheckDialogState extends State<_DataCheckDialog> {
-  final TextEditingController _stationsController = TextEditingController();
-  final TextEditingController _tablesController = TextEditingController();
-
-  @override
-  void dispose() {
-    _stationsController.dispose();
-    _tablesController.dispose();
-    super.dispose();
-  }
+  final Set<String> _selectedStations = {};
+  
+  // 表选项配置：label -> 显示名称
+  final Map<String, String> _tableOptions = {
+    'meet': '会议表',
+    'delegateregister': '代表表',
+    'personinformation': '人员基础信息表',
+  };
+  final Set<String> _selectedTables = {};
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text('数据检查参数', style: TextStyle(fontFamily: 'FZXBYS')),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          TextField(
-            controller: _stationsController,
-            decoration: InputDecoration(
-              labelText: '站点 (多个用逗号分隔)',
-              hintText: '例如: 站点1,站点2',
-              border: OutlineInputBorder(),
+      title: Text('数据检查', style: TextStyle(fontFamily: 'FZXBYS')),
+      content: Container(
+        width: 600, // 设置固定宽度以便左右布局
+        constraints: BoxConstraints(maxHeight: 400),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 左侧：设备选择部分
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '选择设备',
+                    style: TextStyle(
+                      fontFamily: 'FZXBYS',
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: 8),
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade300),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: widget.stations.length,
+                        itemBuilder: (context, index) {
+                          final station = widget.stations[index];
+                          final isSelected = _selectedStations.contains(station);
+                          return CheckboxListTile(
+                            title: Text(station, style: TextStyle(fontFamily: 'FZXBYS')),
+                            value: isSelected,
+                            dense: true,
+                            contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+                            onChanged: (bool? value) {
+                              setState(() {
+                                if (value == true) {
+                                  _selectedStations.add(station);
+                                } else {
+                                  _selectedStations.remove(station);
+                                }
+                              });
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-            style: TextStyle(fontFamily: 'FZXBYS'),
-          ),
-          SizedBox(height: 16),
-          TextField(
-            controller: _tablesController,
-            decoration: InputDecoration(
-              labelText: '表名 (多个用逗号分隔)',
-              hintText: '例如: 表1,表2',
-              border: OutlineInputBorder(),
+            // 中间分隔线
+            Container(
+              width: 1,
+              margin: EdgeInsets.symmetric(horizontal: 16),
+              color: Colors.grey.shade300,
             ),
-            style: TextStyle(fontFamily: 'FZXBYS'),
-          ),
-        ],
+            // 右侧：表选择部分
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '选择表',
+                    style: TextStyle(
+                      fontFamily: 'FZXBYS',
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  SizedBox(height: 8),
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade300),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: ListView(
+                        shrinkWrap: true,
+                        children: _tableOptions.entries.map((entry) {
+                          final label = entry.key;
+                          final displayName = entry.value;
+                          final isSelected = _selectedTables.contains(label);
+                          return CheckboxListTile(
+                            title: Text(displayName, style: TextStyle(fontFamily: 'FZXBYS')),
+                            value: isSelected,
+                            dense: true,
+                            contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 0),
+                            onChanged: (bool? value) {
+                              setState(() {
+                                if (value == true) {
+                                  _selectedTables.add(label);
+                                } else {
+                                  _selectedTables.remove(label);
+                                }
+                              });
+                            },
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
       actions: [
         TextButton(
@@ -2535,9 +3103,21 @@ class _DataCheckDialogState extends State<_DataCheckDialog> {
         ),
         TextButton(
           onPressed: () {
+            if (_selectedStations.isEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('请至少选择一个设备', style: TextStyle(fontFamily: 'FZXBYS'))),
+              );
+              return;
+            }
+            if (_selectedTables.isEmpty) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('请至少选择一个表', style: TextStyle(fontFamily: 'FZXBYS'))),
+              );
+              return;
+            }
             Navigator.of(context).pop({
-              'stations': _stationsController.text.trim(),
-              'tables': _tablesController.text.trim(),
+              'stations': _selectedStations.toList(),
+              'tables': _selectedTables.toList(),
             });
           },
           child: Text('确定', style: TextStyle(fontFamily: 'FZXBYS', color: Colors.red)),

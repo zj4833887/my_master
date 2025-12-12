@@ -206,9 +206,9 @@ class Scc {
   }
 
   //上报报到失败数据
-  Future<bool> reportCheckInFailed(CheckReq r) async {
+  Future<bool> reportCheckInFailed(ReportCheckFailedReq r) async {
     try {
-      final req = GRequest(creq: r);
+      final req = GRequest(freq: r);
       final resp = await client.reportCheckInFailed(req);
       if (resp.code != 200) {
         throw Exception('请求失败，错误码: ${resp.code}, 消息: ${resp.msg}');

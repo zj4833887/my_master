@@ -67,6 +67,18 @@ flutter:
     - assets/images/jsj.png
     - assets/images/didian.png
     - assets/images/device_map.png
+    - assets/images/jb_baodao.png
+    - assets/images/jb_chongbao.png
+    - assets/images/jb_gongzuo.png
+    - assets/images/jb_konxian.png
+    - assets/images/dj_baodao.png
+    - assets/images/dj_chongbao.png
+    - assets/images/dj_gongzuo.png
+    - assets/images/dj_kongxian.png
+    - assets/images/jsj_baodao.png
+    - assets/images/jsj_chongbao.png
+    - assets/images/jsj_gongzuo.png
+    - assets/images/jsj_kongxian.png
   # The following line ensures that the Material Icons font is
   # included with your application, so that you can use the icons in
   # the material Icons class.

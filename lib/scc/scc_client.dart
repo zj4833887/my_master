@@ -309,7 +309,7 @@ class SccClientWrapper {
   }
 
   // 数据检查
-  static Future<ApiResult<bool>> databaseCheck({
+  static Future<ApiResult<String>> databaseCheck({
     required String meetID,
     required String stations,
     required String tables,
@@ -322,16 +322,39 @@ class SccClientWrapper {
       );
       final greq = GRequest(creq: req);
       final resp = await instance.client.databaseCheck(greq);
+      
+      // 记录完整的 gRPC 响应，用于调试
+      developer.log('databaseCheck gRPC Response: code=${resp.code}, msg=${resp.msg}, data=${resp.data}, remark=${resp.remark}');
+      
+      // 构建完整的响应信息
+      String resultData = '';
+      if (resp.data.isNotEmpty) {
+        resultData = resp.data;
+      }
+      if (resp.remark.isNotEmpty) {
+        if (resultData.isNotEmpty) {
+          resultData += '\n\n备注: ${resp.remark}';
+        } else {
+          resultData = '备注: ${resp.remark}';
+        }
+      }
+      
+      // 如果没有数据但有消息，显示消息
+      if (resultData.isEmpty && resp.msg.isNotEmpty) {
+        resultData = resp.msg;
+      }
+      
       return ApiResult(
         code: resp.code,
         msg: resp.msg,
-        data: resp.code == 200,
+        data: resultData.isEmpty ? null : resultData,
       );
     } catch (e) {
+      developer.log('databaseCheck error: $e');
       return ApiResult(
         code: -1,
         msg: e.toString(),
-        data: false,
+        data: null,
       );
     }
   }
@@ -362,7 +385,7 @@ class SccClientWrapper {
     required String stations,
   }) async {
     try {
-      final req = CheckReq(
+      final req = ReportCheckFailedReq(
         meetID: meetID,
         stations: stations,
       );
@@ -455,7 +478,10 @@ class SccClientWrapper {
             try {
               final jsonData = jsonDecode(msg.data) as Map<String, dynamic>;
               final remark = jsonData['remark']?.toString() ?? '';
-
+            if(remark.contains('WS_Client')){
+              onData(jsonData, 'WS_Client');
+              // print('WS_Client: $jsonData');
+            }
               // 使用 remark 作为 channel 传回上层，方便区分不同 WS_* 类型
               final effectiveChannel =
                   remark.isNotEmpty ? remark : msg.channel;

@@ -21,6 +21,7 @@ class FacilityPoint {
   final double x;
   final double y;
   final String cameraUri;
+  final String ip;
 
   const FacilityPoint({
     required this.facilityId,
@@ -28,6 +29,7 @@ class FacilityPoint {
     required this.x,
     required this.y,
     required this.cameraUri,
+    required this.ip,
   });
 
   factory FacilityPoint.fromBackend(
@@ -57,6 +59,7 @@ class FacilityPoint {
           json['cameraUri']?.toString() ??
           json['stream']?.toString() ??
           '',
+      ip: json['IP']?.toString() ?? '',
     );
   }
 
@@ -93,6 +96,31 @@ double _asDouble(dynamic value, double fallback) {
   return fallback;
 }
 
+// 解码后端返回的 Base64 底图，容错常见格式问题
+Uint8List? _decodeBase64Image(dynamic raw) {
+  if (raw == null) return null;
+  var bgImg = raw.toString();
+  if (bgImg.isEmpty) return null;
+
+  // 移除 data:image/png;base64, 之类的前缀
+  bgImg = bgImg.replaceFirst(RegExp(r'^data:image/[^;]+;base64,'), '');
+  // 去掉空白字符
+  bgImg = bgImg.replaceAll(RegExp(r'\\s+'), '');
+  // URL-safe 字符替换
+  bgImg = bgImg.replaceAll('-', '+').replaceAll('_', '/');
+  // 补全 padding
+  final mod = bgImg.length % 4;
+  if (mod != 0) {
+    bgImg = bgImg.padRight(bgImg.length + (4 - mod), '=');
+  }
+
+  try {
+    return base64Decode(bgImg);
+  } catch (_) {
+    return null;
+  }
+}
+
 /// RouteSettings 中的配置：底图 + 尺寸 + 点位
 class FacilityRouteSettings {
   final String imgName;
@@ -126,23 +154,19 @@ class FacilityRouteSettings {
         )
         .toList();
 
-    Uint8List? bgBytes;
-    final bgImg = json['BgImg']?.toString() ?? '';
-    if (bgImg.isNotEmpty) {
-      try {
-        bgBytes = base64Decode(bgImg);
-      } catch (_) {
-        bgBytes = null;
-      }
-    }
+    final bgBytes = _decodeBase64Image(json['BgImg']);
 
-    final backendBgPath = json['BgImgUrl']?.toString() ??
-        json['BgImgPath']?.toString() ??
-        json['ImgUrl']?.toString() ??
-        json['ImgPath']?.toString() ??
-        '';
+    // 兼容多种字段名，并进行 trim，避免空字符串导致 AssetImage('')
+    final backendBgPath = (json['BgImgUrl'] ??
+            json['BgImgPath'] ??
+            json['BgPath'] ??
+            json['ImgUrl'] ??
+            json['ImgPath'] ??
+            json['Img'])
+        ?.toString()
+        .trim();
 
-    final resolvedBgPath = backendBgPath.isNotEmpty
+    final resolvedBgPath = backendBgPath != null && backendBgPath.isNotEmpty
         ? backendBgPath
         : 'assets/images/device_map.png';
 
@@ -191,6 +215,7 @@ class FacilityRouteMap {
             x: 0.08,
             y: 0.35,
             cameraUri: 'rtsp://south-1',
+            ip: '',
           ),
           FacilityPoint(
             facilityId: '南门-2',
@@ -198,6 +223,7 @@ class FacilityRouteMap {
             x: 0.10,
             y: 0.50,
             cameraUri: 'rtsp://south-2',
+            ip: '',
           ),
           FacilityPoint(
             facilityId: '南门-3',
@@ -205,6 +231,7 @@ class FacilityRouteMap {
             x: 0.08,
             y: 0.65,
             cameraUri: 'rtsp://south-3',
+            ip: '',
           ),
           // 东门（下边）9 台设备
           FacilityPoint(
@@ -213,6 +240,7 @@ class FacilityRouteMap {
             x: 0.20,
             y: 0.92,
             cameraUri: 'rtsp://east-1',
+            ip: '',
           ),
           FacilityPoint(
             facilityId: '东门-2',
@@ -220,6 +248,7 @@ class FacilityRouteMap {
             x: 0.30,
             y: 0.93,
             cameraUri: 'rtsp://east-2',
+            ip: '',
           ),
           FacilityPoint(
             facilityId: '东门-3',
@@ -227,6 +256,7 @@ class FacilityRouteMap {
             x: 0.40,
             y: 0.94,
             cameraUri: 'rtsp://east-3',
+            ip: '',
           ),
           FacilityPoint(
             facilityId: '东门-4',
@@ -234,6 +264,7 @@ class FacilityRouteMap {
             x: 0.50,
             y: 0.95,
             cameraUri: 'rtsp://east-4',
+            ip: '',
           ),
           FacilityPoint(
             facilityId: '东门-5',
@@ -241,6 +272,7 @@ class FacilityRouteMap {
             x: 0.60,
             y: 0.94,
             cameraUri: 'rtsp://east-5',
+            ip: '',
           ),
           FacilityPoint(
             facilityId: '东门-6',
@@ -248,6 +280,7 @@ class FacilityRouteMap {
             x: 0.70,
             y: 0.93,
             cameraUri: 'rtsp://east-6',
+            ip: '',
           ),
           FacilityPoint(
             facilityId: '东门-7',
@@ -255,6 +288,7 @@ class FacilityRouteMap {
             x: 0.80,
             y: 0.92,
             cameraUri: 'rtsp://east-7',
+            ip: '',
           ),
           FacilityPoint(
             facilityId: '东门-8',
@@ -262,6 +296,7 @@ class FacilityRouteMap {
             x: 0.32,
             y: 0.88,
             cameraUri: 'rtsp://east-8',
+            ip: '',
           ),
           FacilityPoint(
             facilityId: '东门-9',
@@ -269,6 +304,7 @@ class FacilityRouteMap {
             x: 0.68,
             y: 0.88,
             cameraUri: 'rtsp://east-9',
+            ip: '',
           ),
           // 北门（右边）4 台设备
           FacilityPoint(
@@ -277,6 +313,7 @@ class FacilityRouteMap {
             x: 0.92,
             y: 0.30,
             cameraUri: 'rtsp://north-1',
+            ip: '',
           ),
           FacilityPoint(
             facilityId: '北门-2',
@@ -284,6 +321,7 @@ class FacilityRouteMap {
             x: 0.90,
             y: 0.45,
             cameraUri: 'rtsp://north-2',
+            ip: '',
           ),
           FacilityPoint(
             facilityId: '北门-3',
@@ -291,6 +329,7 @@ class FacilityRouteMap {
             x: 0.92,
             y: 0.60,
             cameraUri: 'rtsp://north-3',
+            ip: '',
           ),
           FacilityPoint(
             facilityId: '北门-4',
@@ -298,6 +337,7 @@ class FacilityRouteMap {
             x: 0.88,
             y: 0.75,
             cameraUri: 'rtsp://north-4',
+            ip: '',
           ),
           // 西门（上边）5 台设备
           FacilityPoint(
@@ -306,6 +346,7 @@ class FacilityRouteMap {
             x: 0.25,
             y: 0.08,
             cameraUri: 'rtsp://west-1',
+            ip: '',
           ),
           FacilityPoint(
             facilityId: '西门-2',
@@ -313,6 +354,7 @@ class FacilityRouteMap {
             x: 0.40,
             y: 0.07,
             cameraUri: 'rtsp://west-2',
+            ip: '',
           ),
           FacilityPoint(
             facilityId: '西门-3',
@@ -320,6 +362,7 @@ class FacilityRouteMap {
             x: 0.55,
             y: 0.06,
             cameraUri: 'rtsp://west-3',
+            ip: '',
           ),
           FacilityPoint(
             facilityId: '西门-4',
@@ -327,6 +370,7 @@ class FacilityRouteMap {
             x: 0.70,
             y: 0.07,
             cameraUri: 'rtsp://west-4',
+            ip: '',
           ),
           FacilityPoint(
             facilityId: '西门-5',
@@ -334,6 +378,7 @@ class FacilityRouteMap {
             x: 0.85,
             y: 0.08,
             cameraUri: 'rtsp://west-5',
+            ip: '',
           ),
         ],
       ),
@@ -395,56 +440,77 @@ class FacilityRouteMap {
         map.containsKey('CanvasSize') ||
         map.containsKey('BgImg') ||
         map.containsKey('BgImgUrl') ||
+        map.containsKey('BgImgPath') ||
+        map.containsKey('BgPath') ||
         map.containsKey('ImgName');
   }
 }
 
-class DeviceMapWidget extends StatelessWidget {
+class DeviceMapWidget extends StatefulWidget {
   const DeviceMapWidget({
     super.key,
     this.onCabinetTap,
     this.selectedGateName,
     this.routeMap,
+    this.deviceStatusMap, // 设备状态映射：facilityId -> status
+    this.port1030Map, // 设备是否 1030 端口：facilityId -> true/false
+    this.port8084Map, // 设备是否 8084 端口：facilityId -> true/false
   });
 
   final Function(String)? onCabinetTap; // 点击机柜/设备的回调
   final String? selectedGateName; // 当前选中的设备/门名称
   final FacilityRouteMap? routeMap; // 路由与点位数据
+  final Map<String, String>? deviceStatusMap; // 设备状态映射：facilityId -> status (空闲/报到/工作/重报)
+  final Map<String, bool>? port1030Map; // 设备是否 1030 端口：facilityId -> true/false
+  final Map<String, bool>? port8084Map; // 设备是否 8084 端口：facilityId -> true/false
+
+  @override
+  State<DeviceMapWidget> createState() => _DeviceMapWidgetState();
+}
+
+class _DeviceMapWidgetState extends State<DeviceMapWidget> {
+  ImageProvider<Object>? _cachedBgImage;
+  FacilityRouteSettings? _cachedSettings;
 
   FacilityRouteMap get _effectiveRouteMap =>
-      routeMap ?? FacilityRouteMap.demo();
+      widget.routeMap ?? FacilityRouteMap.demo();
+
+  ImageProvider<Object> _getOrBuildBgImage(FacilityRouteSettings settings) {
+    // 如果 settings 没变，直接返回缓存的 ImageProvider
+    if (_cachedSettings == settings && _cachedBgImage != null) {
+      return _cachedBgImage!;
+    }
+    // settings 变了，重新创建并缓存
+    _cachedSettings = settings;
+    _cachedBgImage = _buildBgImage(settings);
+    return _cachedBgImage!;
+  }
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade300, width: 1),
-        boxShadow: <BoxShadow>[
-          BoxShadow(
-            color: Colors.grey.shade200,
-            blurRadius: 4,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
+      padding: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const SizedBox(height: 12),
-          // 设备分布图
-          Expanded(
+          // 设备分布图：固定渲染区域 1250x650，保证底图铺满
+          SizedBox(
+            width: 1250,
+            height: 630,
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final settings = _effectiveRouteMap.settings;
                 final facilities = settings.facilities.isEmpty
                     ? FacilityRouteMap.demo().settings.facilities
                     : settings.facilities;
+
+                // 固定为 1250x650，若外部约束更小则按可用空间等比缩放
+                final targetWidth = 1250.0;
+                final targetHeight = 650.0;
                 final baseWidth =
-                    settings.canvasSize.width == 0 ? 1920 : settings.canvasSize.width;
+                    settings.canvasSize.width == 0 ? targetWidth : settings.canvasSize.width;
                 final baseHeight =
-                    settings.canvasSize.height == 0 ? 1080 : settings.canvasSize.height;
+                    settings.canvasSize.height == 0 ? targetHeight : settings.canvasSize.height;
 
                 final scale = math.min(
                   constraints.maxWidth / baseWidth,
@@ -461,7 +527,7 @@ class DeviceMapWidget extends StatelessWidget {
                     child: InteractiveViewer(
                       minScale: 1,
                       maxScale: 3.5,
-                      boundaryMargin: const EdgeInsets.all(160),
+                      boundaryMargin: const EdgeInsets.all(0),
                       child: SizedBox(
                         width: renderWidth,
                         height: renderHeight,
@@ -472,23 +538,32 @@ class DeviceMapWidget extends StatelessWidget {
                                 decoration: BoxDecoration(
                                   borderRadius: BorderRadius.circular(4),
                                   image: DecorationImage(
-                                    image: _buildBgImage(settings),
+                                    image: _getOrBuildBgImage(settings),
                                     fit: BoxFit.fill,
                                   ),
                                 ),
                               ),
                             ),
                             ...facilities.map((f) {
-                              final left = renderWidth * f.x;
-                              final top = renderHeight * f.y;
+                              final status = _resolveStatus(widget.deviceStatusMap, f);
+                              final isPort1030 = _resolvePort(widget.port1030Map, f);
+                              final isPort8084 = _resolvePort(widget.port8084Map, f);
+                              final markerWidth = 20.0;
+                              final markerHeight = isPort8084 ? 40.0 : 20.0;
+                              final left = renderWidth * f.x - markerWidth / 2;
+                              final top = renderHeight * f.y - markerHeight / 2;
                               return Positioned(
-                                left: left - 12,
-                                top: top - 12,
+                                left: left,
+                                top: top,
                                 child: _buildFacilityMarker(
                                   context,
                                   point: f,
-                                  isSelected: selectedGateName == f.facilityId,
-                                  onTap: onCabinetTap,
+                                  isSelected: widget.selectedGateName == f.facilityId,
+                                  status: status,
+                                  isPort1030: isPort1030,
+                                  isPort8084: isPort8084,
+                                  markerHeight: markerHeight,
+                                  onTap: widget.onCabinetTap,
                                 ),
                               );
                             }),
@@ -508,12 +583,46 @@ class DeviceMapWidget extends StatelessWidget {
     );
   }
 
+  String? _resolveStatus(
+    Map<String, String>? statusMap,
+    FacilityPoint point,
+  ) {
+    if (statusMap == null) return null;
+    return statusMap[point.facilityId] ??
+        (point.ip.isNotEmpty ? statusMap[point.ip] : null) ??
+        (point.cameraUri.isNotEmpty ? statusMap[point.cameraUri] : null);
+  }
+
+  bool _resolvePort(
+    Map<String, bool>? portMap,
+    FacilityPoint point,
+  ) {
+    if (portMap == null) return false;
+    return portMap[point.facilityId] ??
+        (point.ip.isNotEmpty ? portMap[point.ip] : null) ??
+        (point.cameraUri.isNotEmpty ? portMap[point.cameraUri] : null) ??
+        false;
+  }
+
   ImageProvider<Object> _buildBgImage(FacilityRouteSettings settings) {
     final bytes = settings.bgBytes;
     if (bytes != null && bytes.isNotEmpty) {
       return MemoryImage(bytes);
     }
     final path = settings.bgPath;
+    if (path.isEmpty) {
+      return const AssetImage(''); // 返回一个空的占位，避免异常
+    }
+    if (path.startsWith('data:image')) {
+      final parts = path.split(',');
+      if (parts.length == 2) {
+        final decoded = _decodeBase64Image(parts[1]);
+        if (decoded != null && decoded.isNotEmpty) {
+          return MemoryImage(decoded);
+        }
+      }
+      return const AssetImage(''); // 兜底，避免 AssetImage('data:...') 报错
+    }
     if (path.startsWith('http')) {
       return NetworkImage(path);
     }
@@ -525,42 +634,62 @@ class DeviceMapWidget extends StatelessWidget {
     BuildContext context, {
     required FacilityPoint point,
     required bool isSelected,
+    String? status,
+    bool isPort1030 = false,
+    bool isPort8084 = false,
+    double markerHeight = 20,
     Function(String)? onTap,
   }) {
-    final color = _facilityColor(point.facilityType);
+    // 根据状态获取对应的图片路径
+    final statusImagePath = _getStatusImagePath(
+      status,
+      isPort1030: isPort1030,
+      isPort8084: isPort8084,
+    );
+    final fallbackImage = isPort1030
+        ? 'assets/images/dj_kongxian.png'
+        : (isPort8084
+            ? 'assets/images/jb_konxian.png'
+            : 'assets/images/jsj_kongxian.png');
+    const double markerWidth = 20;
+    final double effectiveHeight = isPort8084 ? markerHeight : 20;
+
     return GestureDetector(
       onTap: () => onTap?.call(point.facilityId),
       child: Tooltip(
-        message: '${point.facilityId}\n${point.cameraUri}',
+        message: '${point.facilityId}\n${status ?? '未知状态'}\n${point.cameraUri}',
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
-          width: isSelected ? 26 : 20,
-          height: isSelected ? 26 : 20,
+          width: markerWidth,
+          height: effectiveHeight,
           decoration: BoxDecoration(
-            color: color.withOpacity(0.85),
-            shape: BoxShape.circle,
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: isSelected ? Colors.white : Colors.black26,
+              color: isSelected ? Colors.white : Colors.transparent,
               width: isSelected ? 3 : 1.5,
             ),
             boxShadow: isSelected
                 ? [
                     BoxShadow(
-                      color: color.withOpacity(0.7),
+                      color: Colors.black.withOpacity(0.3),
                       blurRadius: 10,
                       spreadRadius: 2,
                     ),
                   ]
                 : null,
           ),
-          child: Center(
-            child: Text(
-              point.facilityId,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-              ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: Image.asset(
+              statusImagePath ?? fallbackImage,
+              width: markerWidth,
+              height: effectiveHeight,
+              fit: BoxFit.contain,
+              errorBuilder: (context, error, stackTrace) {
+                // 如果图片加载失败，显示默认颜色圆圈
+                return _buildDefaultMarker(point, isSelected, effectiveHeight);
+              },
             ),
           ),
         ),
@@ -568,19 +697,109 @@ class DeviceMapWidget extends StatelessWidget {
     );
   }
 
-  /// 不同类型设备对应不同颜色
-  static Color _facilityColor(FacilityType type) {
-    switch (type) {
-      case FacilityType.cabinet:
-        return Colors.blue.shade400;
-      case FacilityType.floorDevice:
-        return Colors.green.shade400;
-      case FacilityType.terminal:
-        return Colors.orange.shade400;
-      case FacilityType.master:
-        return Colors.purple.shade400;
+  /// 根据状态获取对应的图片路径
+  String? _getStatusImagePath(
+    String? status, {
+    bool isPort1030 = false,
+    bool isPort8084 = false,
+  }) {
+    if (status == null) {
+      return isPort1030
+          ? 'assets/images/dj_kongxian.png'
+          : (isPort8084
+              ? 'assets/images/jb_konxian.png'
+              : 'assets/images/jsj_kongxian.png');
+    }
+
+    // 1030 端口使用 dj_ 前缀图片
+    if (isPort1030) {
+      switch (status) {
+        case '空闲':
+          return 'assets/images/dj_kongxian.png';
+        case '报到':
+          return 'assets/images/dj_baodao.png';
+        case '工作':
+          return 'assets/images/dj_gongzuo.png';
+        case '重报':
+          return 'assets/images/dj_chongbao.png';
+        default:
+          return 'assets/images/dj_kongxian.png';
+      }
+    }
+    
+    // 8084 端口使用 jb_ 前缀图片
+    if (isPort8084) {
+      switch (status) {
+        case '空闲':
+          return 'assets/images/jb_konxian.png';
+        case '报到':
+          return 'assets/images/jb_baodao.png';
+        case '工作':
+          return 'assets/images/jb_gongzuo.png';
+        case '重报':
+          return 'assets/images/jb_chongbao.png';
+        default:
+          return 'assets/images/jb_konxian.png';
+      }
+    }
+
+    // 其他端口统一用 jsj_ 前缀图片
+    switch (status) {
+      case '空闲':
+        return 'assets/images/jsj_kongxian.png';
+      case '报到':
+        return 'assets/images/jsj_baodao.png';
+      case '工作':
+        return 'assets/images/jsj_gongzuo.png';
+      case '重报':
+        return 'assets/images/jsj_chongbao.png';
+      default:
+        return 'assets/images/jsj_kongxian.png';
     }
   }
+
+  /// 默认标记样式（当没有状态图片时使用）
+  Widget _buildDefaultMarker(
+    FacilityPoint point,
+    bool isSelected,
+    double markerHeight,
+  ) {
+    return Container(
+      width: 20,
+      height: markerHeight,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: Colors.black26,
+          width: 1.5,
+        ),
+        boxShadow: isSelected
+            ? [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.25),
+                  blurRadius: 8,
+                  spreadRadius: 2,
+                ),
+              ]
+            : null,
+      ),
+      child: Center(
+        child: Text(
+          point.facilityId.length > 4
+              ? point.facilityId.substring(0, 4)
+              : point.facilityId,
+          style: const TextStyle(
+            color: Colors.black87,
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+          ),
+          textAlign: TextAlign.center,
+        ),
+      ),
+    );
+  }
+
 }
 
 
