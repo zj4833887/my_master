@@ -1,9 +1,33 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart' show kIsWeb, defaultTargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:window_manager/window_manager.dart';
+
 import 'screens/login.dart';
 import 'scc/scc_client.dart';
+import 'utils/local_exit_api.dart';
+import 'utils/show_exit_confirm_dialog.dart';
 
-void main() {
+final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
+
+bool get _isDesktopPlatform {
+  if (kIsWeb) return false;
+  return defaultTargetPlatform == TargetPlatform.windows ||
+      defaultTargetPlatform == TargetPlatform.linux ||
+      defaultTargetPlatform == TargetPlatform.macOS;
+}
+
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  var desktopExitConfirm = false;
+  if (_isDesktopPlatform) {
+    await windowManager.ensureInitialized();
+    await windowManager.setPreventClose(true);
+    desktopExitConfirm = true;
+  }
+
   // 在程序启动时设置客户端类型为 Server
   SccClientWrapper.setProcessType('Server').then((result) {
     if (result.isSuccess) {
@@ -14,41 +38,78 @@ void main() {
   }).catchError((error) {
     print('设置客户端类型出错: $error');
   });
-  runApp(const MyApp());
+
+  runApp(MyApp(desktopExitConfirm: desktopExitConfirm));
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class MyApp extends StatefulWidget {
+  const MyApp({super.key, required this.desktopExitConfirm});
 
-  // This widget is the root of your application.
+  /// Windows / Linux / macOS：拦截系统关闭（标题栏 X、Alt+F4 等），弹出确认框。
+  final bool desktopExitConfirm;
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver, WindowListener {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    if (widget.desktopExitConfirm) {
+      windowManager.addListener(this);
+    }
+  }
+
+  @override
+  void dispose() {
+    if (widget.desktopExitConfirm) {
+      windowManager.removeListener(this);
+    }
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.detached) {
+      // 程序即将退出（桌面窗口关闭/进程销毁等），通知后端一次即可。
+      unawaited(LocalExitApi.callExit());
+    }
+  }
+
+  @override
+  void onWindowClose() {
+    if (!widget.desktopExitConfirm) return;
+    unawaited(_handleDesktopWindowClose());
+  }
+
+  Future<void> _handleDesktopWindowClose() async {
+    final ctx = appNavigatorKey.currentContext;
+    if (ctx == null) {
+      await windowManager.setPreventClose(false);
+      await windowManager.close();
+      return;
+    }
+    if (!await showExitConfirmDialog(ctx)) return;
+    await LocalExitApi.callExit();
+    await windowManager.setPreventClose(false);
+    await windowManager.close();
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '电子会议报到系统',
+      navigatorKey: appNavigatorKey,
+      title: '主控终端',
       theme: ThemeData(
-        fontFamily: 'SimSun',
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
+        fontFamily: 'Microsoft YaHei',
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
       initialRoute: '/login',
       routes: {
         '/login': (context) => const LoginScreen(), // 登录页路由
-        // 定义其他页面的路由
-        // '/home': (context) => const HomeScreen(), // 主页路由
       },
     );
   }

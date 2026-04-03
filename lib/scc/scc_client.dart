@@ -41,6 +41,23 @@ class SccClientWrapper {
     return _client!;
   }
 
+  // 统一把“连接/不可用/超时”等网络错误归一成同一句提示。
+  // 这样上层 UI（所有接口）失败时都会得到可读的“服务器连接出错”信息。
+  static String _normalizeSccError(Object e) {
+    final s = e.toString();
+    final lower = s.toLowerCase();
+    if (lower.contains('unavailable') ||
+        lower.contains('socketexception') ||
+        lower.contains('failed to connect') ||
+        lower.contains('connection') ||
+        lower.contains('refused') ||
+        lower.contains('timeout') ||
+        lower.contains('timed out')) {
+      return '服务器连接出错';
+    }
+    return s;
+  }
+
   static Future<void> close() async {
     await _client?.close();
     _client = null;
@@ -58,7 +75,7 @@ class SccClientWrapper {
     } catch (e) {
       return ApiResult(
         code: -1,
-        msg: e.toString(),
+        msg: _normalizeSccError(e),
         data: null,
       );
     }
@@ -76,7 +93,7 @@ class SccClientWrapper {
     } catch (e) {
       return ApiResult(
         code: -1,
-        msg: e.toString(),
+        msg: _normalizeSccError(e),
         data: false,
       );
     }
@@ -95,7 +112,7 @@ class SccClientWrapper {
     } catch (e) {
       return ApiResult(
         code: -1,
-        msg: e.toString(),
+        msg: _normalizeSccError(e),
         data: false,
       );
     }
@@ -136,7 +153,7 @@ class SccClientWrapper {
     } catch (e) {
       return ApiResult(
         code: -1,
-        msg: e.toString(),
+        msg: _normalizeSccError(e),
         data: null,
       );
     }
@@ -172,7 +189,7 @@ class SccClientWrapper {
     } catch (e) {
       return ApiResult(
         code: -1,
-        msg: e.toString(),
+        msg: _normalizeSccError(e),
         data: null,
       );
     }
@@ -207,7 +224,7 @@ class SccClientWrapper {
     } catch (e) {
       return ApiResult(
         code: -1,
-        msg: e.toString(),
+        msg: _normalizeSccError(e),
         data: null,
       );
     }
@@ -225,7 +242,7 @@ class SccClientWrapper {
     } catch (e) {
       return ApiResult(
         code: -1,
-        msg: e.toString(),
+        msg: _normalizeSccError(e),
         data: null,
       );
     }
@@ -244,7 +261,7 @@ class SccClientWrapper {
     } catch (e) {
       return ApiResult(
         code: -1,
-        msg: e.toString(),
+        msg: _normalizeSccError(e),
         data: false,
       );
     }
@@ -264,7 +281,7 @@ class SccClientWrapper {
     } catch (e) {
       return ApiResult(
         code: -1,
-        msg: e.toString(),
+        msg: _normalizeSccError(e),
         data: false,
       );
     }
@@ -284,7 +301,7 @@ class SccClientWrapper {
     } catch (e) {
       return ApiResult(
         code: -1,
-        msg: e.toString(),
+        msg: _normalizeSccError(e),
         data: false,
       );
     }
@@ -302,7 +319,7 @@ class SccClientWrapper {
     } catch (e) {
       return ApiResult(
         code: -1,
-        msg: e.toString(),
+        msg: _normalizeSccError(e),
         data: null,
       );
     }
@@ -353,7 +370,7 @@ class SccClientWrapper {
       developer.log('databaseCheck error: $e');
       return ApiResult(
         code: -1,
-        msg: e.toString(),
+        msg: _normalizeSccError(e),
         data: null,
       );
     }
@@ -373,7 +390,7 @@ class SccClientWrapper {
     } catch (e) {
       return ApiResult(
         code: -1,
-        msg: e.toString(),
+        msg: _normalizeSccError(e),
         data: false,
       );
     }
@@ -398,18 +415,16 @@ class SccClientWrapper {
     } catch (e) {
       return ApiResult(
         code: -1,
-        msg: e.toString(),
+        msg: _normalizeSccError(e),
         data: false,
       );
     }
   }
 
-  // 导入报到记录
-  static Future<ApiResult<String>> importRecord(List<int> fileData) async {
+  // 导入报到记录（当前服务端按“文件路径”处理 file 字段）
+  static Future<ApiResult<String>> importRecord(String filePath) async {
     try {
-      // 将 List<int> 转换为 base64 字符串
-      final fileString = base64Encode(fileData);
-      final req = ImportReq(file: fileString);
+      final req = ImportReq(file: filePath);
       final result = await instance.importRecord(req);
       return ApiResult(
         code: 200,
@@ -419,7 +434,7 @@ class SccClientWrapper {
     } catch (e) {
       return ApiResult(
         code: -1,
-        msg: e.toString(),
+        msg: _normalizeSccError(e),
         data: null,
       );
     }
@@ -439,7 +454,7 @@ class SccClientWrapper {
     } catch (e) {
       return ApiResult(
         code: -1,
-        msg: e.toString(),
+        msg: _normalizeSccError(e),
         data: false,
       );
     }
@@ -492,7 +507,7 @@ class SccClientWrapper {
           }
         },
         onError: (error) {
-          onError?.call(error.toString());
+          onError?.call(_normalizeSccError(error));
         },
         onDone: () {
           // 流结束
@@ -501,7 +516,7 @@ class SccClientWrapper {
 
       return subscription;
     } catch (e) {
-      onError?.call(e.toString());
+      onError?.call(_normalizeSccError(e));
       return null;
     }
   }
@@ -531,7 +546,7 @@ class SccClientWrapper {
     } catch (e) {
       return ApiResult(
         code: -1,
-        msg: e.toString(),
+        msg: _normalizeSccError(e),
         data: null,
       );
     }
@@ -555,7 +570,44 @@ class SccClientWrapper {
     } catch (e) {
       return ApiResult(
         code: -1,
-        msg: e.toString(),
+        msg: _normalizeSccError(e),
+        data: false,
+      );
+    }
+  }
+
+  // 查询标语列表（显示管理用）
+  static Future<ApiResult<dynamic>> querySlogan() async {
+    try {
+      final result = await instance.querySlogan();
+      return ApiResult(
+        code: 200,
+        msg: '成功',
+        data: result,
+      );
+    } catch (e) {
+      return ApiResult(
+        code: -1,
+        msg: _normalizeSccError(e),
+        data: null,
+      );
+    }
+  }
+
+  // 下发标语（显示管理用）
+  static Future<ApiResult<bool>> sendSlogan({required String data}) async {
+    try {
+      final req = SendSloganReq(data: data);
+      final result = await instance.sendSlogan(req);
+      return ApiResult(
+        code: 200,
+        msg: result ? '成功' : '失败',
+        data: result,
+      );
+    } catch (e) {
+      return ApiResult(
+        code: -1,
+        msg: _normalizeSccError(e),
         data: false,
       );
     }

@@ -4,9 +4,13 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter_html/flutter_html.dart';
 import '../scc/scc_client.dart';
 import '../scc/board.dart';
 import '../widgets/device_map_widget.dart';
+import '../widgets/mixed_font_text.dart';
+import '../utils/local_exit_api.dart';
+import '../utils/show_exit_confirm_dialog.dart';
 
 class _ProgressStepInfo {
   final String title;
@@ -102,9 +106,28 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   // 数据检查相关
   Timer? _dataCheckTimer;
   List<Map<String, dynamic>> _dataCheckResults = [];
+  Timer? _usbAutoImportTimer;
+  bool _isUsbAutoImporting = false;
+  Set<String> _knownUsbRoots = {};
+  final Set<String> _uploadedFileFingerprints = <String>{};
+  String? _lastUsbAutoImportError;
 
   // 加载状态
   bool _isLoading = false;
+  bool _isFileImporting = false;
+
+  // 通知信息（右侧卡片）
+  String _notificationText = '这里显示通知信息';
+
+  // 显示管理（会标/报到情况/标语）状态与数据
+  String _displayManagementType = '标语';
+  bool _isDisplayLoading = false;
+  List<dynamic> _sloganTableData = [];
+  bool _isSendingSlogan = false;
+  bool _isSloganPreviewVisible = false;
+  String _sloganPreviewText = '';
+  Timer? _sloganPreviewTimer;
+  Color _sloganPreviewBackground = Colors.white;
 
   // 设备点位数据（单独的 notifier，避免其他 setState 影响底图）
   final ValueNotifier<FacilityRouteMap?> _routeMapNotifier =
@@ -126,6 +149,11 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     _tabController = TabController(length: 2, vsync: this);
     _meetingTitle = widget.meetingName;
     _initializeData();
+    _startUsbAutoImportWatcher();
+    // 页面初始化后默认拉取“标语”（等首帧渲染完，确保 ScaffoldMessenger 可用）
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadDisplayManagementData();
+    });
   }
 
   @override
@@ -135,7 +163,210 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     _selectedFacilityIdNotifier.dispose();
     _metricsSubscription?.cancel();
     _dataCheckTimer?.cancel();
+    _usbAutoImportTimer?.cancel();
+    _sloganPreviewTimer?.cancel();
     super.dispose();
+  }
+
+  void _startUsbAutoImportWatcher() {
+    if (!Platform.isWindows && !Platform.isLinux) {
+      return;
+    }
+    _usbAutoImportTimer?.cancel();
+    _usbAutoImportTimer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => _scanAndImportUsbTxtFiles(),
+    );
+    Future<void>.microtask(_scanAndImportUsbTxtFiles);
+  }
+
+  Future<void> _scanAndImportUsbTxtFiles() async {
+    if (!mounted || _isUsbAutoImporting) {
+      return;
+    }
+    _isUsbAutoImporting = true;
+    try {
+      final currentRoots = await _discoverUsbRoots();
+      final newRoots =
+          currentRoots.where((root) => !_knownUsbRoots.contains(root)).toList();
+      _knownUsbRoots = currentRoots.toSet();
+      for (final root in newRoots) {
+        await _importTxtFilesFromUsbRoot(root);
+      }
+    } catch (e) {
+      _reportUsbAutoImportError('U盘扫描失败: $e');
+    } finally {
+      _isUsbAutoImporting = false;
+    }
+  }
+
+  void _reportUsbAutoImportError(String message) {
+    if (_lastUsbAutoImportError == message) {
+      return;
+    }
+    _lastUsbAutoImportError = message;
+    debugPrint('[USB Auto Import] $message');
+    if (mounted) {
+      _showMessage(message, isError: true);
+    }
+  }
+
+  Future<List<String>> _discoverUsbRoots() async {
+    if (Platform.isWindows) {
+      return _discoverWindowsUsbRoots();
+    }
+    if (Platform.isLinux) {
+      return _discoverLinuxUsbRoots();
+    }
+    return <String>[];
+  }
+
+  Future<List<String>> _discoverWindowsUsbRoots() async {
+    final roots = <String>{};
+    Future<void> parseDriveText(String text) async {
+      final lines = text.split('\n');
+      for (final rawLine in lines) {
+        final line = rawLine.trim();
+        final match = RegExp(r'^([A-Za-z]):').firstMatch(line);
+        if (match == null) continue;
+        final drive = '${match.group(1)}:\\';
+        if (await Directory(drive).exists()) {
+          roots.add(drive);
+        }
+      }
+    }
+
+    try {
+      final wmic = await Process.run(
+        'wmic',
+        <String>['logicaldisk', 'where', 'DriveType=2', 'get', 'DeviceID'],
+      );
+      if (wmic.exitCode == 0) {
+        await parseDriveText((wmic.stdout ?? '').toString());
+      }
+    } catch (_) {
+      // Ignore and try PowerShell fallback.
+    }
+
+    if (roots.isEmpty) {
+      try {
+        final ps = await Process.run(
+          'powershell',
+          <String>[
+            '-NoProfile',
+            '-Command',
+            "Get-CimInstance Win32_LogicalDisk | Where-Object {\$_.DriveType -eq 2} | Select-Object -ExpandProperty DeviceID",
+          ],
+        );
+        if (ps.exitCode == 0) {
+          await parseDriveText((ps.stdout ?? '').toString());
+        }
+      } catch (_) {
+        // Ignore fallback failures.
+      }
+    }
+
+    final result = roots.toList()..sort();
+    return result;
+  }
+
+  Future<List<String>> _discoverLinuxUsbRoots() async {
+    final roots = <String>{};
+    final user = Platform.environment['USER'] ?? '';
+    final baseDirs = <String>[
+      if (user.isNotEmpty) '/media/$user',
+      if (user.isNotEmpty) '/run/media/$user',
+      '/media',
+      '/run/media',
+    ];
+
+    for (final basePath in baseDirs) {
+      final base = Directory(basePath);
+      if (!await base.exists()) continue;
+      try {
+        await for (final entity in base.list(followLinks: false)) {
+          if (entity is Directory) {
+            roots.add(entity.path);
+          }
+        }
+      } catch (_) {
+        // Ignore inaccessible mount roots.
+      }
+    }
+
+    final result = roots.toList()..sort();
+    return result;
+  }
+
+  Future<void> _importTxtFilesFromUsbRoot(String rootPath) async {
+    final rootDir = Directory(rootPath);
+    if (!await rootDir.exists()) return;
+
+    final txtFiles = <File>[];
+    try {
+      await for (final entity in rootDir.list(followLinks: false)) {
+        if (entity is File && entity.path.toLowerCase().endsWith('.txt')) {
+          txtFiles.add(entity);
+        }
+      }
+    } catch (_) {
+      return;
+    }
+
+    if (txtFiles.isEmpty) return;
+
+    final fileWithTime = <MapEntry<File, DateTime>>[];
+    for (final file in txtFiles) {
+      try {
+        final stat = await file.stat();
+        fileWithTime.add(MapEntry<File, DateTime>(file, stat.modified));
+      } catch (_) {
+        // Skip unreadable files.
+      }
+    }
+    fileWithTime.sort((a, b) => b.value.compareTo(a.value));
+
+    for (final entry in fileWithTime) {
+      final file = entry.key;
+      try {
+        final stat = await file.stat();
+        final fingerprint =
+            '${file.path}|${stat.size}|${stat.modified.millisecondsSinceEpoch}';
+        if (_uploadedFileFingerprints.contains(fingerprint)) {
+          continue;
+        }
+        final importResult = await _importFileFromPath(file.path);
+        if (importResult) {
+          await _renameUploadedFile(file);
+          _uploadedFileFingerprints.add(fingerprint);
+        }
+      } catch (e) {
+        _reportUsbAutoImportError('处理文件失败(${file.path}): $e');
+      }
+    }
+  }
+
+  Future<void> _renameUploadedFile(File file) async {
+    final sourcePath = file.path;
+    final stamp = DateTime.now()
+        .toIso8601String()
+        .replaceAll('-', '')
+        .replaceAll(':', '')
+        .replaceAll('.', '')
+        .replaceAll('T', '_')
+        .replaceAll('Z', '');
+    final target1 = '$sourcePath.uploaded';
+    final target2 = '$sourcePath.uploaded_$stamp';
+
+    try {
+      if (!await File(target1).exists()) {
+        await file.rename(target1);
+      } else {
+        await file.rename(target2);
+      }
+    } catch (_) {
+      // Ignore rename failures; upload has already completed.
+    }
   }
 
   // 初始化数据
@@ -735,6 +966,103 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return 0;
   }
 
+  Future<void> _onAttendDeviceTap(Map<dynamic, dynamic> device) async {
+    final ip = device['IP']?.toString() ?? '';
+    if (ip.isEmpty) return;
+
+    final attend = _parseInt(device['attend']);
+    final guest = _parseInt(device['guest']);
+    final name = device['name']?.toString() ?? ip;
+
+    setState(() {
+      _notificationText = '正在获取设备信息...';
+    });
+    try {
+      final hipc = await _fetchHipcInfo(ip);
+      final text = _formatHipcInfoText(
+        hipc,
+        deviceName: name,
+        attend: attend,
+        guest: guest,
+      );
+      if (!mounted) return;
+      setState(() {
+        _notificationText = text;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _notificationText = '获取设备信息失败: $e';
+      });
+      _showMessage('服务器连接出错', isError: true);
+    }
+  }
+
+  Future<Map<String, dynamic>> _fetchHipcInfo(String ip) async {
+    final httpClient = HttpClient();
+    try {
+      // 设备侧接口：GET http://{IP}:8084/hipc/info
+      final hostOnly = ip.split(':').first.trim();
+      final uri = Uri.parse('http://$hostOnly:8084/hipc/info');
+      final request = await httpClient.getUrl(uri);
+
+      // 连接/读取超时（避免界面长时间卡住）
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+
+      final response = await request.close().timeout(const Duration(seconds: 6));
+      if (response.statusCode != 200) {
+        throw Exception('HTTP ${response.statusCode}');
+      }
+
+      final bodyBytes = await response.transform(utf8.decoder).toList();
+      final bodyStr = bodyBytes.join();
+      final decoded = jsonDecode(bodyStr);
+      if (decoded is Map<String, dynamic>) {
+        return decoded;
+      }
+      if (decoded is Map) {
+        return decoded.cast<String, dynamic>();
+      }
+
+      throw Exception('返回内容格式异常');
+    } finally {
+      httpClient.close(force: true);
+    }
+  }
+
+  String _formatHipcInfoText(
+    Map<String, dynamic> hipc,
+    {required String deviceName, required int attend, required int guest}
+  ) {
+    final data = hipc['data'];
+    if (data is! Map) {
+      return '设备: $deviceName\n响应: 数据格式错误';
+    }
+    final dataMap = data.cast<String, dynamic>();
+
+    final mode = dataMap['mode']?.toString() ?? '-';
+    // hdinfo：你给的示例里包含 hostname/kernel/os/arch/cpu/mem/boot
+    final hdinfoRaw = dataMap['hdinfo'];
+    final hdinfoMap =
+        hdinfoRaw is Map ? hdinfoRaw.cast<String, dynamic>() : <String, dynamic>{};
+
+    String? _get(String key) => hdinfoMap[key]?.toString() ?? dataMap[key]?.toString();
+
+    final buf = StringBuffer();
+    buf.writeln('设备: $deviceName');
+    buf.writeln('运行模式: $mode');
+    buf.writeln('系统信息:');
+    buf.writeln('  主机名: ${_get('hostname') ?? '-'}');
+    buf.writeln('  内核: ${_get('kernel') ?? '-'}');
+    buf.writeln('  操作系统: ${_get('os') ?? '-'}');
+    buf.writeln('  架构: ${_get('arch') ?? '-'}');
+    buf.writeln('  CPU: ${_get('cpu') ?? ''}');
+    buf.writeln('  内存: ${_get('mem') ?? '-'}');
+    buf.writeln('  启动: ${_get('boot') ?? '-'}');
+
+    return buf.toString();
+  }
+
   // 开始会议
   Future<void> _handleStartMeeting() async {
     if (widget.meetId == null || widget.meetId!.isEmpty) {
@@ -779,16 +1107,16 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
-          title: Text('确认结束会议', style: TextStyle(fontFamily: 'FZXBYS')),
-          content: Text('确定要结束当前会议吗？', style: TextStyle(fontFamily: 'FZXBYS')),
+          title: Text('确认结束会议', style: TextStyle(fontFamily: 'Microsoft YaHei')),
+          content: Text('确定要结束当前会议吗？', style: TextStyle(fontFamily: 'Microsoft YaHei')),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
-              child: Text('取消', style: TextStyle(fontFamily: 'FZXBYS')),
+              child: Text('取消', style: TextStyle(fontFamily: 'Microsoft YaHei')),
             ),
             TextButton(
               onPressed: () => Navigator.of(context).pop(true),
-              child: Text('确定', style: TextStyle(fontFamily: 'FZXBYS', color: Colors.red)),
+              child: Text('确定', style: TextStyle(fontFamily: 'Microsoft YaHei', color: Colors.red)),
             ),
           ],
         );
@@ -1069,7 +1397,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   // 文件选取
   Future<void> _handleFilePick() async {
-    if (_isLoading) return;
+    if (_isFileImporting) return;
 
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
@@ -1079,38 +1407,42 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
       if (result != null && result.files.single.path != null) {
         final filePath = result.files.single.path!;
-        final file = File(filePath);
-
-        if (!await file.exists()) {
-          _showMessage('文件不存在', isError: true);
-          return;
-        }
-
-        // 读取文件内容
-        final fileBytes = await file.readAsBytes();
-        final fileData = fileBytes.toList();
-
-        setState(() {
-          _isLoading = true;
-        });
-
-        try {
-          final importResult = await SccClientWrapper.importRecord(fileData);
-          if (importResult.isSuccess) {
-            _showMessage('文件导入成功: ${importResult.data ?? ""}');
-          } else {
-            _showMessage(importResult.msg.isNotEmpty ? importResult.msg : '文件导入失败', isError: true);
-          }
-        } catch (e) {
-          _showMessage('导入失败: $e', isError: true);
-        } finally {
-          setState(() {
-            _isLoading = false;
-          });
-        }
+        await _importFileFromPath(filePath);
       }
     } catch (e) {
       _showMessage('文件选择失败: $e', isError: true);
+    }
+  }
+
+  Future<bool> _importFileFromPath(String filePath) async {
+    if (_isFileImporting) {
+      return false;
+    }
+    final file = File(filePath);
+    if (!await file.exists()) {
+      _showMessage('文件不存在', isError: true);
+      return false;
+    }
+    _isFileImporting = true;
+
+    try {
+      final importResult = await SccClientWrapper.importRecord(filePath);
+      if (importResult.isSuccess) {
+        _showMessage('文件导入成功: ${importResult.data ?? ""}');
+        _lastUsbAutoImportError = null;
+        return true;
+      }
+      _showMessage(importResult.msg.isNotEmpty ? importResult.msg : '文件导入失败',
+          isError: true);
+      debugPrint(
+          '[USB Auto Import] importRecord failed for $filePath: ${importResult.msg}');
+      return false;
+    } catch (e) {
+      _showMessage('导入失败: $e', isError: true);
+      debugPrint('[USB Auto Import] importRecord exception for $filePath: $e');
+      return false;
+    } finally {
+      _isFileImporting = false;
     }
   }
 
@@ -1121,7 +1453,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       SnackBar(
         content: Text(
           message,
-          style: TextStyle(fontFamily: 'FZXBYS'),
+          style: TextStyle(fontFamily: 'Microsoft YaHei'),
         ),
         backgroundColor: isError ? Colors.red : Colors.green,
         duration: Duration(seconds: 2),
@@ -1151,7 +1483,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                 child: Text(
                   title,
                   style: TextStyle(
-                    fontFamily: 'FZXBYS',
+                    fontFamily: 'Microsoft YaHei',
                     color: isSuccess ? Colors.green : Colors.red,
                   ),
                 ),
@@ -1170,7 +1502,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                     Text(
                       '检查结果：',
                       style: TextStyle(
-                        fontFamily: 'FZXBYS',
+                        fontFamily: 'Microsoft YaHei',
                         fontWeight: FontWeight.bold,
                         fontSize: 14,
                       ),
@@ -1187,7 +1519,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                       child: SelectableText(
                         result,
                         style: TextStyle(
-                          fontFamily: 'FZXBYS',
+                          fontFamily: 'Microsoft YaHei',
                           fontSize: 12,
                         ),
                       ),
@@ -1196,7 +1528,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                     Text(
                       '检查完成',
                       style: TextStyle(
-                        fontFamily: 'FZXBYS',
+                        fontFamily: 'Microsoft YaHei',
                         fontSize: 14,
                       ),
                     ),
@@ -1208,7 +1540,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: Text('确定', style: TextStyle(fontFamily: 'FZXBYS')),
+              child: Text('确定', style: TextStyle(fontFamily: 'Microsoft YaHei')),
             ),
           ],
         );
@@ -1386,7 +1718,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           // 标题部分 - 左侧
           ConstrainedBox(
             constraints: BoxConstraints(minWidth: 60),
-            child: Text(
+            child: MixedFontText(
               '$title:',
               style: TextStyle(
                 fontSize: 40,
@@ -1433,7 +1765,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         // 左侧：标签
-                        Text(
+                        MixedFontText(
                           '$label:',
                           style: TextStyle(
                             fontSize: 28,
@@ -1443,10 +1775,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                           ),
                         ),
                         // 右侧：数字
-                        Text(
+                        MixedFontText(
                           value.toString(),
                           style: TextStyle(
-                            fontFamily: 'TimesNewRoman',
+                            fontFamily: 'FZXBYS',
                             fontSize: 26,
                             fontWeight: FontWeight.bold,
                             color: HexColor('#A30014'),
@@ -1690,23 +2022,28 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         final String processType = device['ProcessType'] as String;
         final bool isRack = processType == 'rack';
         final String status = device['status'] as String; // 先定义status变量
-        final Color textColor = status == '工作'
+        final bool isTapDisabled = status == '空闲' || status == '脱机';
+        // 状态背景色不同，因此文字也要随之调整可读性
+        // 其中“报到/重报”要求背景色与黑色文字
+        final Color textColor = status == '工作' || status == '报到' || status == '重报'
             ? Colors.black
             : Colors.white; // 然后使用它
-        return Container(
-          decoration: BoxDecoration(
-            color: isRack ? Colors.grey[200] : Colors.white,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.grey.shade300, width: 1),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black12,
-                blurRadius: 1,
-                offset: Offset(0, 2),
-              ),
-            ],
-          ),
-          child: Column(
+        return InkWell(
+          onTap: isTapDisabled ? null : () => _onAttendDeviceTap(device),
+          child: Container(
+            decoration: BoxDecoration(
+              color: isRack ? Colors.grey[200] : Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey.shade300, width: 1),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black12,
+                  blurRadius: 1,
+                  offset: Offset(0, 2),
+                ),
+              ],
+            ),
+            child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               // 状态指示器 - 使用图片展示
@@ -1754,7 +2091,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                           fontSize: _getStatusFontSize(processType),
                           fontWeight: FontWeight.bold,
                           color: textColor,
-                          fontFamily: 'FZXBYS',
+                          fontFamily: 'Microsoft YaHei',
                           shadows: [
                             Shadow(color: Colors.black, offset: Offset(1, 1)),
                           ],
@@ -1774,7 +2111,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                   style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
-                    fontFamily: 'FZXBYS',
+                    fontFamily: 'Microsoft YaHei',
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -1785,12 +2122,12 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                 padding: EdgeInsets.all(0),
                 child: Column(
                   children: [
-                    Text(
+                    MixedFontText(
                       '出席: ${device['attend']}',
                       style: TextStyle(fontSize: 12, fontFamily: 'FZXBYS'),
                     ),
                     SizedBox(height: 2),
-                    Text(
+                    MixedFontText(
                       '列席: ${device['guest']}',
                       style: TextStyle(
                         fontSize: 12,
@@ -1802,6 +2139,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                 ),
               ),
             ],
+            ),
           ),
         );
       },
@@ -1881,7 +2219,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       case '重报':
         return HexColor('#00F7DE'); // 半透明青色
       case '报到':
-        return HexColor('#00F7DE'); // 报到状态使用青色
+        // 报到要求：黄色背景 + 黑色文字（与 Vue: #ffff00 一致）
+        return HexColor('#FFFF00');
       case '错卡':
         return HexColor('#ffa500'); // 半透明橙色
       default:
@@ -1924,144 +2263,104 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   // 显示管理内容
   Widget _buildDisplayManagementContent() {
     return Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 三个红色按钮
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Container(
+        // 上半部分严格只显示表格
+        decoration: BoxDecoration(
+          border: Border.all(color: Colors.grey[300]!),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: SizedBox(
+              height: 150, // 固定高度（更紧凑，避免挤占下方）
+          child: Column(
             children: [
-              _buildDisplayButton('会标', Icons.flag),
-              _buildDisplayButton('报到情况', Icons.people),
-              _buildDisplayButton('标语', Icons.text_fields),
-            ],
-          ),
-
-          SizedBox(height: 20),
-
-          // 表格标题
-          Text(
-            '显示内容管理',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              fontFamily: 'FZXBYS',
-              color: Colors.black87,
-            ),
-          ),
-
-          SizedBox(height: 12),
-
-          // 表格
-          Container(
-            decoration: BoxDecoration(
-              border: Border.all(color: Colors.grey[300]!),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Column(
-              children: [
-                // 表头
-                Container(
-                  padding: EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[100],
-                    border: Border(
-                      bottom: BorderSide(color: Colors.grey[300]!),
+                  // 表头
+                  Container(
+                    padding: EdgeInsets.symmetric(
+                      vertical: 12,
+                      horizontal: 16,
                     ),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        flex: 1,
-                        child: Text(
-                          '序号',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black87,
-                            fontFamily: 'FZXBYS',
-                          ),
-                        ),
-                      ),
-                      Expanded(
-                        flex: 3,
-                        child: Text(
-                          '内容',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black87,
-                            fontFamily: 'FZXBYS',
-                          ),
-                        ),
-                      ),
-                      Expanded(
-                        flex: 2,
-                        child: Text(
-                          '操作',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black87,
-                            fontFamily: 'FZXBYS',
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-
-                // 表格内容 - 空状态
-                Container(
-                  padding: EdgeInsets.symmetric(vertical: 40, horizontal: 16),
-                  child: Center(
-                    child: Text(
-                      '空',
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: Colors.grey[600],
-                        fontFamily: 'FZXBYS',
+                    decoration: BoxDecoration(
+                      color: Colors.grey[100],
+                      border: Border(
+                        bottom: BorderSide(color: Colors.grey[300]!),
                       ),
                     ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          flex: 1,
+                          child: Text(
+                            '序号',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black87,
+                              fontFamily: 'Microsoft YaHei',
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 3,
+                          child: Text(
+                            '内容',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black87,
+                              fontFamily: 'Microsoft YaHei',
+                            ),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: Text(
+                            '操作',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black87,
+                              fontFamily: 'Microsoft YaHei',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ),
 
-          SizedBox(height: 16),
-
-          // 操作按钮
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              ElevatedButton(
-                onPressed: () {
-                  // 添加内容功能
-                },
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red[700],
-                  foregroundColor: Colors.white,
-                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                ),
-                child: Text('添加内容'),
-              ),
-              SizedBox(width: 12),
-              OutlinedButton(
-                onPressed: _isStepLoading ? null : _loadProgressStep,
-                style: OutlinedButton.styleFrom(
-                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                  side: BorderSide(color: Colors.grey[400]!),
-                ),
-                child: _isStepLoading
-                    ? SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Text('刷新'),
-              ),
-            ],
+                  // 表格内容（占满剩余高度）
+                  Expanded(
+                    child: _displayManagementType == '标语'
+                        ? (_isDisplayLoading
+                            ? const Center(
+                                child: CircularProgressIndicator(),
+                              )
+                            : (_sloganTableData.isEmpty
+                                ? Center(
+                                    child: Text(
+                                      '空',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        color: Colors.grey[600],
+                                        fontFamily: 'Microsoft YaHei',
+                                      ),
+                                    ),
+                                  )
+                                : Scrollbar(
+                                    thumbVisibility: true,
+                                    child: SingleChildScrollView(
+                                      child: Column(
+                                        children: _sloganTableData
+                                            .asMap()
+                                            .entries
+                                            .map((e) =>
+                                                _buildSloganRow(e.key, e.value))
+                                            .toList(),
+                                      ),
+                                    ),
+                                  )))
+                        : const Center(child: Text('空')),
+                  ),
+                ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -2094,9 +2393,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                 '退出',
                 Icons.exit_to_app,
                 color: Colors.white,
-                onTap: () {
-                  // 退出按钮点击事件
-                  Navigator.pop(context);
+                onTap: () async {
+                  if (!await showExitConfirmDialog(context)) return;
+                  await LocalExitApi.callExit();
+                  exit(0);
                 },
               ),
             ],
@@ -2513,7 +2813,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                     title,
                     style: TextStyle(
                       fontSize: fontSize,
-                      fontFamily: 'FZXBYS',
+                      fontFamily: 'Microsoft YaHei',
                       fontWeight: FontWeight.bold,
                       color: HexColor('#A30014'), // 文字颜色保持红色
                     ),
@@ -2552,15 +2852,386 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   void _handleDisplayButtonClick(String buttonType) {
     switch (buttonType) {
       case '会标':
-        // 处理会标显示逻辑
+        setState(() {
+          _displayManagementType = '会标';
+        });
+        _loadDisplayManagementData();
         break;
       case '报到情况':
-        // 处理报到情况显示逻辑
+        setState(() {
+          _displayManagementType = '报到情况';
+        });
+        _loadDisplayManagementData();
         break;
       case '标语':
-        // 处理标语显示逻辑
+        setState(() {
+          _displayManagementType = '标语';
+        });
+        _loadDisplayManagementData();
         break;
     }
+  }
+
+  Future<void> _loadDisplayManagementData() async {
+    if (_isDisplayLoading) return;
+    setState(() {
+      _isDisplayLoading = true;
+    });
+
+    try {
+      if (_displayManagementType == '标语') {
+        final result = await SccClientWrapper.querySlogan();
+        if (!result.isSuccess) {
+          _showMessage(result.msg, isError: true);
+          setState(() {
+            _sloganTableData = [];
+          });
+          return;
+        }
+
+        final data = result.data;
+        List<dynamic> list = [];
+        if (data is List) {
+          list = data;
+        } else if (data is Map) {
+          final maybe = data['data'] ?? data['list'] ?? data['items'];
+          if (maybe is List) {
+            list = maybe;
+          }
+        }
+
+        // vue 里会给每条 tem.state = true，这里同样做一次增强字段，供后续扩展使用
+        // 同时保留“要发送的 value”给后面的“确认显示”操作。
+        final normalized = list.map((e) {
+          if (e is Map<String, dynamic>) {
+            return {
+              ...e,
+              'state': true,
+              'rowValue': e,
+            };
+          }
+          return {
+            'value': e,
+            'rowValue': e,
+            'state': true,
+          };
+        }).toList();
+
+        setState(() {
+          _sloganTableData = normalized;
+        });
+      } else {
+        // 目前仅实现“标语”查询展示；会标/报到情况保持空状态
+        setState(() {
+          _sloganTableData = [];
+        });
+      }
+    } catch (e) {
+      _showMessage('标语查询失败: $e', isError: true);
+      setState(() {
+        _sloganTableData = [];
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDisplayLoading = false;
+        });
+      }
+    }
+  }
+
+  String _extractSloganContent(dynamic item) {
+    if (item == null) return '';
+    if (item is Map) {
+      final map = item.cast<String, dynamic>();
+      final content = (map['content'] ??
+              map['text'] ??
+              map['slogan'] ??
+              map['value'] ??
+              map['data'])
+          ?.toString() ?? '';
+      return content.isNotEmpty ? content : map.toString();
+    }
+    return item.toString();
+  }
+
+  dynamic _extractSloganRowValue(dynamic item) {
+    if (item is Map<String, dynamic>) {
+      if (item['rowValue'] != null) return item['rowValue'];
+      if (item['value'] != null) return item['value'];
+    }
+    return item;
+  }
+
+  Future<void> _previewSlogan(dynamic item, int rowIndex) async {
+    // 取消上一次预览刷新（等同 clearInterval）
+    _sloganPreviewTimer?.cancel();
+    _sloganPreviewTimer = null;
+
+    // 只取 Content/content 内的 HTML 模板
+    final template = _extractSloganHtmlOnlyContent(item);
+    if (!mounted) return;
+
+    // 解析 Parameters（背景色/竖排）
+    final params = _extractSloganParameters(item);
+    final bgColorStr = params['Color']?.toString() ?? '';
+
+    Color bg = Colors.white;
+    if (bgColorStr.startsWith('#') && bgColorStr.length >= 4) {
+      try {
+        bg = HexColor(bgColorStr);
+      } catch (_) {}
+    }
+
+    // 表格行高亮/状态（vue: this.tableData[rowindex].state=false）
+    setState(() {
+      for (int i = 0; i < _sloganTableData.length; i++) {
+        final row = _sloganTableData[i];
+        if (row is Map<String, dynamic>) {
+          row['state'] = i != rowIndex;
+        }
+      }
+      _sloganPreviewBackground = bg;
+      _isSloganPreviewVisible = template.isNotEmpty;
+    });
+
+    // 会议标题拆分 oneLeve/twoLeve（vue: this.title.split("@")）
+    final rawTitle =
+        (_meetingTitle.isNotEmpty ? _meetingTitle : widget.meetingName);
+    final parts = rawTitle.split('@');
+    final oneLeve = parts.isNotEmpty ? parts[0] : '';
+    final twoLeve = parts.length > 1 ? parts[1] : '';
+
+    // 数字来源：用当前统计（应到/未到），并按 vue 逻辑计算 a=shouldarrive-notyet
+    final shouldArrive = attendStats['应到'] ?? 0;
+    final notYet = attendStats['未到'] ?? 0;
+    final a = shouldArrive - notYet;
+
+    final width = shouldArrive.toString().length;
+    String padNum(int n) {
+      final s = n.toString();
+      if (s.length >= width) return s;
+      return '\u2000' * (width - s.length) + s; // 等同 padStart(..., '\u2000')
+    }
+
+    String computeHtml() {
+      // {0}=oneLeve, {1}=twoLeve, {2}=shouldarrive, {3}=a, {4}=notyet
+      return template
+          .replaceAll('{0}', oneLeve)
+          .replaceAll('{1}', twoLeve)
+          .replaceAll('{2}', padNum(shouldArrive))
+          .replaceAll('{3}', padNum(a))
+          .replaceAll('{4}', padNum(notYet));
+    }
+
+    // 立即刷新一次
+    final first = computeHtml();
+    if (!mounted) return;
+    setState(() {
+      _notificationText = ''; // 不再输出纯文本，避免重复展示
+      _sloganPreviewText = first;
+    });
+
+    // 每 100ms 刷新一次（等同 setInterval）
+    _sloganPreviewTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      if (!mounted) return;
+      setState(() {
+        _sloganPreviewText = computeHtml();
+      });
+    });
+  }
+
+  String _extractSloganHtmlOnlyContent(dynamic item) {
+    if (item == null) return '';
+    if (item is! Map) return '';
+
+    final map = item.cast<String, dynamic>();
+
+    // content 可能为 Content / content / html 等大小写不同的字段
+    dynamic c = map['content'] ?? map['Content'] ?? map['html'] ?? map['HTML'];
+    final extracted = _normalizeHtmlValue(c);
+    if (extracted.isNotEmpty) return _decodeHtmlEntitiesIfNeeded(extracted);
+
+    // 有些后端可能把整段对象放在 data/content 字段里为 JSON 字符串
+    final dataCandidate = map['data'] ?? map['value'];
+    if (dataCandidate is String) {
+      final s = dataCandidate.trim();
+      if (s.startsWith('{') && s.endsWith('}')) {
+        try {
+          final decoded = jsonDecode(s);
+          if (decoded is Map) {
+            final inner = _normalizeHtmlValue(decoded['content']);
+            if (inner.isNotEmpty) {
+              return _decodeHtmlEntitiesIfNeeded(inner);
+            }
+          }
+        } catch (_) {
+          // ignore
+        }
+      }
+    }
+
+    return '';
+  }
+
+  Map<String, dynamic> _extractSloganParameters(dynamic item) {
+    if (item is! Map) return <String, dynamic>{};
+    final map = item.cast<String, dynamic>();
+    final raw = map['Parameters'] ?? map['parameters'] ?? map['PARAMETERS'];
+    if (raw is Map) {
+      return raw.cast<String, dynamic>();
+    }
+    if (raw is String) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          return decoded.cast<String, dynamic>();
+        }
+      } catch (_) {}
+    }
+    return <String, dynamic>{};
+  }
+
+  String _normalizeHtmlValue(dynamic v) {
+    if (v == null) return '';
+    if (v is String) return v;
+    if (v is num) return v.toString();
+    if (v is bool) return v.toString();
+    if (v is List) return v.map((e) => _normalizeHtmlValue(e)).join('');
+    if (v is Map) {
+      final m = v.cast<String, dynamic>();
+      final wanted = <String>{'content', 'html', 'value', 'text', 'data'};
+      for (final entry in m.entries) {
+        final keyLower = entry.key.toLowerCase();
+        if (wanted.contains(keyLower)) {
+          final inner = _normalizeHtmlValue(entry.value);
+          if (inner.isNotEmpty) return inner;
+        }
+      }
+      // 兜底不返回 map.toString()，避免把整行 JSON 当 HTML 渲染
+      return '';
+    }
+    return v.toString();
+  }
+
+  String _decodeHtmlEntitiesIfNeeded(String s) {
+    if (!s.contains('&lt;') && !s.contains('&gt;') && !s.contains('&amp;')) {
+      return s;
+    }
+    // 只做常见实体解码，避免把后端内容误处理
+    return s
+        .replaceAll('&lt;', '<')
+        .replaceAll('&gt;', '>')
+        .replaceAll('&quot;', '"')
+        .replaceAll('&#39;', "'")
+        .replaceAll('&apos;', "'")
+        .replaceAll('&amp;', '&');
+  }
+
+  Future<void> _confirmDisplaySlogan(dynamic item, int rowIndex) async {
+    if (_isSendingSlogan || _isDisplayLoading) return;
+    final value = _extractSloganRowValue(item);
+    final jsonData = JsonEncoder().convert(value);
+
+    if (mounted) {
+      setState(() => _isSendingSlogan = true);
+    }
+
+    try {
+      final result = await SccClientWrapper.sendSlogan(data: jsonData);
+      if (result.isSuccess && result.data == true) {
+        if (!mounted) return;
+        _showMessage('发送成功');
+      } else {
+        if (!mounted) return;
+        _showMessage(result.msg.isNotEmpty ? result.msg : '发送失败',
+            isError: true);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      _showMessage('发送失败: $e', isError: true);
+    } finally {
+      if (mounted) {
+        setState(() => _isSendingSlogan = false);
+      }
+    }
+  }
+
+  Widget _buildSloganRow(int index, dynamic item) {
+    final content = _extractSloganContent(item);
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: Colors.grey.shade200, width: 1),
+        ),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            flex: 1,
+            child: Text(
+              '${index + 1}',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontFamily: 'Microsoft YaHei', fontSize: 13),
+            ),
+          ),
+          Expanded(
+            flex: 3,
+            child: Text(
+              content.isNotEmpty ? content : '—',
+              style: TextStyle(fontFamily: 'Microsoft YaHei', fontSize: 13),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          Expanded(
+            flex: 2,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                TextButton(
+                  onPressed: _isSendingSlogan
+                      ? null
+                      : () => _previewSlogan(item, index),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  ),
+                  child: Text(
+                    '预览',
+                    style: TextStyle(
+                      fontFamily: 'Microsoft YaHei',
+                      fontSize: 12,
+                      color: HexColor('#A30014'),
+                    ),
+                  ),
+                ),
+                SizedBox(height: 2),
+                ElevatedButton(
+                  onPressed: _isSendingSlogan
+                      ? null
+                      : () => _confirmDisplaySlogan(item, index),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: HexColor('#A30014'),
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    elevation: 0,
+                  ),
+                  child: Text(
+                    '确认显示',
+                    style: TextStyle(
+                      fontFamily: 'Microsoft YaHei',
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -2661,16 +3332,14 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                         Tab(
                                           child: Text(
                                             '报到情况',
-                                            style: TextStyle(
-                                              fontFamily: 'FZXBYS',
-                                            ),
+                                            style: TextStyle(fontFamily: 'Microsoft YaHei'),
                                           ),
                                         ),
                                         Tab(
                                           child: Text(
                                             '设备点位图',
                                             style: TextStyle(
-                                              fontFamily: 'FZXBYS',
+                                              fontFamily: 'Microsoft YaHei',
                                             ),
                                           ),
                                         ),
@@ -2718,11 +3387,18 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                             // 会议管理标签（可点击）
                                             Expanded(
                                               child: GestureDetector(
-                                                onTap: () => setState(
-                                                  () =>
-                                                      _isMeetingManagementSelected =
-                                                          true,
-                                                ),
+                                                onTap: () {
+                                                  _sloganPreviewTimer?.cancel();
+                                                  _sloganPreviewTimer = null;
+                                                  setState(() {
+                                                    _isMeetingManagementSelected =
+                                                        true;
+                                                    // 切到会议管理时清空通知与预览
+                                                    _notificationText = '';
+                                                    _isSloganPreviewVisible = false;
+                                                    _sloganPreviewText = '';
+                                                  });
+                                                },
                                                 child: Container(
                                                   decoration: BoxDecoration(
                                                     border: Border(
@@ -2751,7 +3427,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                                       '会议管理',
                                                       style: TextStyle(
                                                         fontSize: 16,
-                                                        fontFamily: 'FZXBYS',
+                                                        fontFamily: 'Microsoft YaHei',
                                                         fontWeight:
                                                             _isMeetingManagementSelected
                                                             ? FontWeight.bold
@@ -2800,7 +3476,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                                       '显示管理',
                                                       style: TextStyle(
                                                         fontSize: 16,
-                                                        fontFamily: 'FZXBYS',
+                                                        fontFamily: 'Microsoft YaHei',
                                                         fontWeight:
                                                             !_isMeetingManagementSelected
                                                             ? FontWeight.bold
@@ -2847,7 +3523,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                             '通知信息',
                                             style: TextStyle(
                                               fontSize: 16,
-                                              fontFamily: 'FZXBYS',
+                                              fontFamily: 'Microsoft YaHei',
                                               fontWeight: FontWeight.bold,
                                             ),
                                           ),
@@ -2861,15 +3537,104 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                                     BorderRadius.circular(6),
                                               ),
                                               padding: const EdgeInsets.all(8),
-                                              child: SingleChildScrollView(
-                                                child: Text(
-                                                  '这里显示通知信息',
-                                                  style: TextStyle(
-                                                    fontSize: 14,
-                                                    fontFamily: 'FZXBYS',
-                                                  ),
-                                                ),
-                                              ),
+                                              child: (_isSloganPreviewVisible &&
+                                                      _notificationText
+                                                          .trim()
+                                                          .isEmpty)
+                                                  // 仅预览时：直接贴顶显示，不走滚动容器，避免出现空白
+                                                  ? SizedBox(
+                                                      width: double.infinity,
+                                                      child: AspectRatio(
+                                                        aspectRatio: 4 / 3,
+                                                        child: Container(
+                                                          decoration:
+                                                              BoxDecoration(
+                                                            borderRadius:
+                                                                BorderRadius
+                                                                    .circular(
+                                                                        6),
+                                                            border: Border.all(
+                                                              color: HexColor(
+                                                                  '#A30014'),
+                                                            ),
+                                                            color:
+                                                                _sloganPreviewBackground,
+                                                          ),
+                                                          padding:
+                                                              const EdgeInsets
+                                                                  .all(8),
+                                                          child: Html(
+                                                            data: _sloganPreviewText
+                                                                    .isNotEmpty
+                                                                ? _sloganPreviewText
+                                                                : '<div style="text-align:center; color:#A30014; font-weight:bold;">—</div>',
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    )
+                                                  : SingleChildScrollView(
+                                                      child: Column(
+                                                        crossAxisAlignment:
+                                                            CrossAxisAlignment
+                                                                .stretch,
+                                                        children: [
+                                                          if (_notificationText
+                                                              .trim()
+                                                              .isNotEmpty)
+                                                            MixedFontText(
+                                                              _notificationText,
+                                                              style:
+                                                                  const TextStyle(
+                                                                fontSize: 14,
+                                                                fontFamily:
+                                                                    'Microsoft YaHei',
+                                                              ),
+                                                            ),
+                                                          if (_isSloganPreviewVisible)
+                                                            Padding(
+                                                              padding:
+                                                                  const EdgeInsets
+                                                                      .only(
+                                                                      top: 10),
+                                                              child: SizedBox(
+                                                                width: double
+                                                                    .infinity,
+                                                                child:
+                                                                    AspectRatio(
+                                                                  aspectRatio:
+                                                                      4 / 3,
+                                                                  child:
+                                                                      Container(
+                                                                    decoration:
+                                                                        BoxDecoration(
+                                                                      borderRadius:
+                                                                          BorderRadius.circular(
+                                                                              6),
+                                                                      border:
+                                                                          Border
+                                                                              .all(
+                                                                        color: HexColor(
+                                                                            '#A30014'),
+                                                                      ),
+                                                                      color:
+                                                                          _sloganPreviewBackground,
+                                                                    ),
+                                                                    padding: const EdgeInsets
+                                                                        .all(8),
+                                                                    child:
+                                                                        Html(
+                                                                      data: _sloganPreviewText
+                                                                              .isNotEmpty
+                                                                          ? _sloganPreviewText
+                                                                          : '<div style="text-align:center; color:#A30014; font-weight:bold;">—</div>',
+                                                                    ),
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                            ),
+                                                        ],
+                                                      ),
+                                                    ),
                                             ),
                                           ),
                                         ],
@@ -2914,7 +3679,7 @@ class _StationSelectionDialogState extends State<_StationSelectionDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.title, style: TextStyle(fontFamily: 'FZXBYS')),
+      title: Text(widget.title, style: TextStyle(fontFamily: 'Microsoft YaHei')),
       content: Container(
         width: double.maxFinite,
         constraints: BoxConstraints(maxHeight: 400),
@@ -2925,7 +3690,7 @@ class _StationSelectionDialogState extends State<_StationSelectionDialog> {
             final station = widget.stations[index];
             final isSelected = _selectedStations.contains(station);
             return CheckboxListTile(
-              title: Text(station, style: TextStyle(fontFamily: 'FZXBYS')),
+              title: Text(station, style: TextStyle(fontFamily: 'Microsoft YaHei')),
               value: isSelected,
               onChanged: (bool? value) {
                 setState(() {
@@ -2943,13 +3708,13 @@ class _StationSelectionDialogState extends State<_StationSelectionDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: Text('取消', style: TextStyle(fontFamily: 'FZXBYS')),
+          child: Text('取消', style: TextStyle(fontFamily: 'Microsoft YaHei')),
         ),
         TextButton(
           onPressed: () {
             Navigator.of(context).pop(_selectedStations.toList());
           },
-          child: Text('确定', style: TextStyle(fontFamily: 'FZXBYS', color: Colors.red)),
+          child: Text('确定', style: TextStyle(fontFamily: 'Microsoft YaHei', color: Colors.red)),
         ),
       ],
     );
@@ -2982,7 +3747,7 @@ class _DataCheckDialogState extends State<_DataCheckDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text('数据检查', style: TextStyle(fontFamily: 'FZXBYS')),
+      title: Text('数据检查', style: TextStyle(fontFamily: 'Microsoft YaHei')),
       content: Container(
         width: 600, // 设置固定宽度以便左右布局
         constraints: BoxConstraints(maxHeight: 400),
@@ -2998,7 +3763,7 @@ class _DataCheckDialogState extends State<_DataCheckDialog> {
                   Text(
                     '选择设备',
                     style: TextStyle(
-                      fontFamily: 'FZXBYS',
+                      fontFamily: 'Microsoft YaHei',
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
                     ),
@@ -3017,7 +3782,7 @@ class _DataCheckDialogState extends State<_DataCheckDialog> {
                           final station = widget.stations[index];
                           final isSelected = _selectedStations.contains(station);
                           return CheckboxListTile(
-                            title: Text(station, style: TextStyle(fontFamily: 'FZXBYS')),
+                            title: Text(station, style: TextStyle(fontFamily: 'Microsoft YaHei')),
                             value: isSelected,
                             dense: true,
                             contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 0),
@@ -3053,7 +3818,7 @@ class _DataCheckDialogState extends State<_DataCheckDialog> {
                   Text(
                     '选择表',
                     style: TextStyle(
-                      fontFamily: 'FZXBYS',
+                      fontFamily: 'Microsoft YaHei',
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
                     ),
@@ -3072,7 +3837,7 @@ class _DataCheckDialogState extends State<_DataCheckDialog> {
                           final displayName = entry.value;
                           final isSelected = _selectedTables.contains(label);
                           return CheckboxListTile(
-                            title: Text(displayName, style: TextStyle(fontFamily: 'FZXBYS')),
+                            title: Text(displayName, style: TextStyle(fontFamily: 'Microsoft YaHei')),
                             value: isSelected,
                             dense: true,
                             contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 0),
@@ -3099,19 +3864,19 @@ class _DataCheckDialogState extends State<_DataCheckDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: Text('取消', style: TextStyle(fontFamily: 'FZXBYS')),
+          child: Text('取消', style: TextStyle(fontFamily: 'Microsoft YaHei')),
         ),
         TextButton(
           onPressed: () {
             if (_selectedStations.isEmpty) {
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('请至少选择一个设备', style: TextStyle(fontFamily: 'FZXBYS'))),
+                SnackBar(content: Text('请至少选择一个设备', style: TextStyle(fontFamily: 'Microsoft YaHei'))),
               );
               return;
             }
             if (_selectedTables.isEmpty) {
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text('请至少选择一个表', style: TextStyle(fontFamily: 'FZXBYS'))),
+                SnackBar(content: Text('请至少选择一个表', style: TextStyle(fontFamily: 'Microsoft YaHei'))),
               );
               return;
             }
@@ -3120,7 +3885,7 @@ class _DataCheckDialogState extends State<_DataCheckDialog> {
               'tables': _selectedTables.toList(),
             });
           },
-          child: Text('确定', style: TextStyle(fontFamily: 'FZXBYS', color: Colors.red)),
+          child: Text('确定', style: TextStyle(fontFamily: 'Microsoft YaHei', color: Colors.red)),
         ),
       ],
     );

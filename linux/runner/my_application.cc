@@ -40,15 +40,21 @@ static void my_application_activate(GApplication* application) {
   if (use_header_bar) {
     GtkHeaderBar* header_bar = GTK_HEADER_BAR(gtk_header_bar_new());
     gtk_widget_show(GTK_WIDGET(header_bar));
-    gtk_header_bar_set_title(header_bar, "my_master");
+    // Use a custom title widget so we can center it.
+    GtkWidget* title_label = gtk_label_new("主控终端");
+    gtk_widget_show(title_label);
+    gtk_widget_set_halign(title_label, GTK_ALIGN_CENTER);
+    gtk_header_bar_set_custom_title(header_bar, title_label);
     gtk_header_bar_set_show_close_button(header_bar, TRUE);
     gtk_window_set_titlebar(window, GTK_WIDGET(header_bar));
   } else {
-    gtk_window_set_title(window, "my_master");
+    gtk_window_set_title(window, "主控终端");
   }
 
   gtk_window_set_default_size(window, 1280, 720);
   gtk_widget_show(GTK_WIDGET(window));
+  // Start maximized.
+  gtk_window_maximize(window);
 
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(project, self->dart_entrypoint_arguments);

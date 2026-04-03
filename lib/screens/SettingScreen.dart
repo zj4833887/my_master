@@ -4,6 +4,7 @@ import 'dart:async';
 import './MeetingDetailScreen.dart';
 import 'package:hexcolor/hexcolor.dart';
 import '../scc/scc_client.dart';
+import '../widgets/mixed_font_text.dart';
 
 // 会议数据模型
 class MeetingData {
@@ -459,7 +460,7 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                     node.title,
                     style: TextStyle(
                       fontSize: 16,
-                      fontFamily: 'FZXBYS',
+                      fontFamily: 'Microsoft YaHei',
                       fontWeight: node.isMeeting
                           ? FontWeight.normal
                           : FontWeight.w500,
@@ -476,7 +477,7 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                     statusText,
                     style: TextStyle(
                       fontSize: 14,
-                      fontFamily: 'FZXBYS',
+                      fontFamily: 'Microsoft YaHei',
                       color: statusColor,
                     ),
                   ),
@@ -587,7 +588,7 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                   '会议组织结构',
                   style: TextStyle(
                     fontSize: 20,
-                    fontFamily: 'FZXBYS',
+                    fontFamily: 'Microsoft YaHei',
                     fontWeight: FontWeight.bold,
                     color: Colors.red[700],
                   ),
@@ -623,7 +624,7 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                                 Text(
                                   '暂无会议数据',
                                   style: TextStyle(
-                                    fontFamily: 'FZXBYS',
+                                    fontFamily: 'Microsoft YaHei',
                                     color: Colors.grey[600],
                                   ),
                                 ),
@@ -686,7 +687,7 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                   '会议情况概览',
                   style: TextStyle(
                     fontSize: 20,
-                    fontFamily: 'FZXBYS',
+                    fontFamily: 'Microsoft YaHei',
                     fontWeight: FontWeight.bold,
                     color: Colors.red[700],
                   ),
@@ -713,7 +714,7 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                         '当前会议:',
                         style: TextStyle(
                           fontSize: 16,
-                          fontFamily: 'FZXBYS',
+                          fontFamily: 'Microsoft YaHei',
                           fontWeight: FontWeight.w500,
                         ),
                       ),
@@ -723,7 +724,7 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                     _isPreparing ? _preparingTitle : (_currentMeeting.isNotEmpty ? _currentMeeting : '未选择会议'),
                     style: TextStyle(
                       fontSize: 18,
-                      fontFamily: 'FZXBYS',
+                      fontFamily: 'Microsoft YaHei',
                       fontWeight: FontWeight.bold,
                       color: Colors.blue[700],
                     ),
@@ -743,7 +744,7 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                   foregroundColor: Colors.white,
                   textStyle: TextStyle(
                     fontSize: 18,
-                    fontFamily: 'FZXBYS',
+                    fontFamily: 'Microsoft YaHei',
                     fontWeight: FontWeight.bold,
                   ),
                   shape: RoundedRectangleBorder(
@@ -809,7 +810,7 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                   type,
                   style: TextStyle(
                     fontSize: 18,
-                    fontFamily: 'FZXBYS',
+                    fontFamily: 'Microsoft YaHei',
                     fontWeight: FontWeight.bold,
                     color: color[700],
                   ),
@@ -829,15 +830,15 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
                           entry.key,
                           style: TextStyle(
                             fontSize: 15,
-                            fontFamily: 'FZXBYS',
+                            fontFamily: 'Microsoft YaHei',
                             color: Colors.grey[700],
                           ),
                         ),
-                        Text(
+                        MixedFontText(
                           entry.value.toString(),
                           style: TextStyle(
                             fontSize: 16,
-                            fontFamily: 'TimesNewRoman',
+                            fontFamily: 'Microsoft YaHei',
                             fontWeight: FontWeight.bold,
                             color: color[700],
                           ),

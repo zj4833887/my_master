@@ -71,7 +71,22 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _isLoading = false; // 是否正在加载中的状态标志
   bool _isPasswordVisible = false; // 密码是否可见的状态标志
   bool _dialogVisible = false; // 提示对话框是否可见的状态标志
+  String _dialogMessage = '请输入账号和密码';
   late FocusNode _keyboardFocusNode; // 捕获回车键
+
+  String _normalizeLoginMessage(String message) {
+    final text = message.trim();
+    if (text.isEmpty) {
+      return '登录失败';
+    }
+    if (text.contains('用户名或密码错误') ||
+        text.contains('账号或密码错误') ||
+        text.contains('invalid') ||
+        text.contains('unauth')) {
+      return '账号密码错了';
+    }
+    return text;
+  }
 
   @override
   void initState() {
@@ -102,6 +117,7 @@ class _LoginScreenState extends State<LoginScreen> {
       setState(() {
         _isLoading = false;
         _dialogVisible = true;
+        _dialogMessage = '请输入账号和密码';
       });
       return; // 直接返回，不执行后续请求
     }
@@ -123,12 +139,16 @@ class _LoginScreenState extends State<LoginScreen> {
           // 登录失败
         setState(() {
           _dialogVisible = true;
+          _dialogMessage = _normalizeLoginMessage(
+            result.msg.isNotEmpty ? result.msg : '登录失败',
+          );
         });
       }
     } catch (error) {
       // 显示错误信息给用户
       setState(() {
         _dialogVisible = true;
+        _dialogMessage = _normalizeLoginMessage(error.toString());
       });
     } finally {
       // 确保在请求完成或出错后隐藏加载圈
@@ -153,6 +173,15 @@ class _LoginScreenState extends State<LoginScreen> {
         onKey: (RawKeyEvent event) {
           if (event is RawKeyDownEvent) {
             final key = event.logicalKey;
+            if (_dialogVisible &&
+                (key == LogicalKeyboardKey.enter ||
+                    key == LogicalKeyboardKey.numpadEnter ||
+                    key == LogicalKeyboardKey.space)) {
+              setState(() {
+                _dialogVisible = false;
+              });
+              return;
+            }
             if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
               if (!_isLoading) _simulateLogin();
             }
@@ -198,7 +227,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             '系统登录',
                             style: TextStyle(
                               fontSize: 24,
-                              fontFamily: 'FZXBYS',
+                              fontFamily: 'Microsoft YaHei',
                               fontWeight: FontWeight.bold,
                               color: Colors.black, // 深蓝色文字
                             ),
@@ -311,7 +340,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                       '登      录',
                                       style: TextStyle(
                                         fontSize: 28,
-                                        fontFamily: 'FZXBYS',
+                                        fontFamily: 'Microsoft YaHei',
                                         color: Colors.white,
                                       ),
                                     ),
@@ -330,7 +359,7 @@ class _LoginScreenState extends State<LoginScreen> {
           if (_dialogVisible)
             AlertDialog(
               title: const Text('温馨提示'), // 对话框标题
-              content: const Text('请输入账号和密码'), // 对话框内容
+              content: Text(_dialogMessage), // 对话框内容
               actions: [
                 TextButton(
                   onPressed: () {
