@@ -123,6 +123,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   String _displayManagementType = '标语';
   bool _isDisplayLoading = false;
   List<dynamic> _sloganTableData = [];
+  final Set<int> _sloganPreviewedRowIndices = {};
   bool _isSendingSlogan = false;
   bool _isSloganPreviewVisible = false;
   String _sloganPreviewText = '';
@@ -2885,6 +2886,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           _showMessage(result.msg, isError: true);
           setState(() {
             _sloganTableData = [];
+            _sloganPreviewedRowIndices.clear();
           });
           return;
         }
@@ -2919,17 +2921,20 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
         setState(() {
           _sloganTableData = normalized;
+          _sloganPreviewedRowIndices.clear();
         });
       } else {
         // 目前仅实现“标语”查询展示；会标/报到情况保持空状态
         setState(() {
           _sloganTableData = [];
+          _sloganPreviewedRowIndices.clear();
         });
       }
     } catch (e) {
       _showMessage('标语查询失败: $e', isError: true);
       setState(() {
         _sloganTableData = [];
+        _sloganPreviewedRowIndices.clear();
       });
     } finally {
       if (mounted) {
@@ -2993,6 +2998,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       }
       _sloganPreviewBackground = bg;
       _isSloganPreviewVisible = template.isNotEmpty;
+      _sloganPreviewedRowIndices.add(rowIndex);
     });
 
     // 会议标题拆分 oneLeve/twoLeve（vue: this.title.split("@")）
@@ -3129,7 +3135,11 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   }
 
   Future<void> _confirmDisplaySlogan(dynamic item, int rowIndex) async {
-    if (_isSendingSlogan || _isDisplayLoading) return;
+    if (_isSendingSlogan ||
+        _isDisplayLoading ||
+        !_sloganPreviewedRowIndices.contains(rowIndex)) {
+      return;
+    }
     final value = _extractSloganRowValue(item);
     final jsonData = JsonEncoder().convert(value);
 
@@ -3187,15 +3197,17 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           ),
           Expanded(
             flex: 2,
-            child: Column(
+            child: Row(
               mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 TextButton(
                   onPressed: _isSendingSlogan
                       ? null
                       : () => _previewSlogan(item, index),
                   style: TextButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   ),
                   child: Text(
                     '预览',
@@ -3206,15 +3218,17 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                     ),
                   ),
                 ),
-                SizedBox(height: 2),
+                const SizedBox(width: 4),
                 ElevatedButton(
-                  onPressed: _isSendingSlogan
+                  onPressed: (_isSendingSlogan ||
+                          !_sloganPreviewedRowIndices.contains(index))
                       ? null
                       : () => _confirmDisplaySlogan(item, index),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: HexColor('#A30014'),
                     foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     elevation: 0,
                   ),
                   child: Text(
