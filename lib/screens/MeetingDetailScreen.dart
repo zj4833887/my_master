@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:hexcolor/hexcolor.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -9,6 +8,7 @@ import '../scc/scc_client.dart';
 import '../scc/board.dart';
 import '../widgets/device_map_widget.dart';
 import '../widgets/mixed_font_text.dart';
+import '../utils/hex_color.dart';
 import '../utils/local_exit_api.dart';
 import '../utils/show_exit_confirm_dialog.dart';
 
@@ -109,7 +109,6 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   Timer? _usbAutoImportTimer;
   bool _isUsbAutoImporting = false;
   Set<String> _knownUsbRoots = {};
-  final Set<String> _uploadedFileFingerprints = <String>{};
   String? _lastUsbAutoImportError;
 
   // 加载状态
@@ -330,43 +329,13 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     for (final entry in fileWithTime) {
       final file = entry.key;
       try {
-        final stat = await file.stat();
-        final fingerprint =
-            '${file.path}|${stat.size}|${stat.modified.millisecondsSinceEpoch}';
-        if (_uploadedFileFingerprints.contains(fingerprint)) {
-          continue;
-        }
         final importResult = await _importFileFromPath(file.path);
         if (importResult) {
-          await _renameUploadedFile(file);
-          _uploadedFileFingerprints.add(fingerprint);
+          // 不改名：允许同一个文件在后续重复被识别导入
         }
       } catch (e) {
         _reportUsbAutoImportError('处理文件失败(${file.path}): $e');
       }
-    }
-  }
-
-  Future<void> _renameUploadedFile(File file) async {
-    final sourcePath = file.path;
-    final stamp = DateTime.now()
-        .toIso8601String()
-        .replaceAll('-', '')
-        .replaceAll(':', '')
-        .replaceAll('.', '')
-        .replaceAll('T', '_')
-        .replaceAll('Z', '');
-    final target1 = '$sourcePath.uploaded';
-    final target2 = '$sourcePath.uploaded_$stamp';
-
-    try {
-      if (!await File(target1).exists()) {
-        await file.rename(target1);
-      } else {
-        await file.rename(target2);
-      }
-    } catch (_) {
-      // Ignore rename failures; upload has already completed.
     }
   }
 
@@ -974,6 +943,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     final attend = _parseInt(device['attend']);
     final guest = _parseInt(device['guest']);
     final name = device['name']?.toString() ?? ip;
+    final processType = device['ProcessType']?.toString() ?? '';
 
     setState(() {
       _notificationText = '正在获取设备信息...';
@@ -985,6 +955,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         deviceName: name,
         attend: attend,
         guest: guest,
+        processType: processType,
       );
       if (!mounted) return;
       setState(() {
@@ -1033,7 +1004,12 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   String _formatHipcInfoText(
     Map<String, dynamic> hipc,
-    {required String deviceName, required int attend, required int guest}
+    {
+      required String deviceName,
+      required int attend,
+      required int guest,
+      String processType = '',
+    }
   ) {
     final data = hipc['data'];
     if (data is! Map) {
@@ -1042,16 +1018,43 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     final dataMap = data.cast<String, dynamic>();
 
     final mode = dataMap['mode']?.toString() ?? '-';
+    final modeLower = mode.toLowerCase();
+    final modeDisplay = modeLower == 'master'
+        ? '主机'
+        : modeLower == 'backup'
+            ? '备机'
+            : mode;
     // hdinfo：你给的示例里包含 hostname/kernel/os/arch/cpu/mem/boot
     final hdinfoRaw = dataMap['hdinfo'];
     final hdinfoMap =
         hdinfoRaw is Map ? hdinfoRaw.cast<String, dynamic>() : <String, dynamic>{};
 
-    String? _get(String key) => hdinfoMap[key]?.toString() ?? dataMap[key]?.toString();
+    String? _get(String key) =>
+        hdinfoMap[key]?.toString() ?? dataMap[key]?.toString();
+
+    // 如果设备是“硬盘/双机”(master/backup)，boot 通常在其子对象内
+    Map<String, dynamic> _asMap(dynamic v) {
+      if (v is Map<String, dynamic>) return v;
+      if (v is Map) return v.cast<String, dynamic>();
+      return const <String, dynamic>{};
+    }
+
+    final masterMap = _asMap(hdinfoMap['master'] ?? hdinfoMap['Master']);
+    final backupMap = _asMap(hdinfoMap['backup'] ?? hdinfoMap['Backup']);
+    final masterBoot = masterMap['boot']?.toString() ??
+        masterMap['Boot']?.toString() ??
+        hdinfoMap['boot']?.toString();
+    final backupBoot = backupMap['boot']?.toString() ??
+        backupMap['Boot']?.toString() ??
+        hdinfoMap['boot']?.toString();
+
+    final isDiskLike = processType.toLowerCase().contains('disk') ||
+        masterMap.isNotEmpty ||
+        backupMap.isNotEmpty;
 
     final buf = StringBuffer();
     buf.writeln('设备: $deviceName');
-    buf.writeln('运行模式: $mode');
+    buf.writeln('运行模式: $modeDisplay');
     buf.writeln('系统信息:');
     buf.writeln('  主机名: ${_get('hostname') ?? '-'}');
     buf.writeln('  内核: ${_get('kernel') ?? '-'}');
@@ -1059,7 +1062,13 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     buf.writeln('  架构: ${_get('arch') ?? '-'}');
     buf.writeln('  CPU: ${_get('cpu') ?? ''}');
     buf.writeln('  内存: ${_get('mem') ?? '-'}');
-    buf.writeln('  启动: ${_get('boot') ?? '-'}');
+    if (isDiskLike && (masterMap.isNotEmpty || backupMap.isNotEmpty)) {
+      buf.writeln('  boot 系统启动时间:');
+      buf.writeln('    主机: ${masterBoot ?? '-'}');
+      buf.writeln('    备机: ${backupBoot ?? '-'}');
+    } else {
+      buf.writeln('  boot 系统启动时间: ${_get('boot') ?? '-'}');
+    }
 
     return buf.toString();
   }
@@ -1222,16 +1231,22 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       return;
     }
 
-    // 获取站点列表（从客户端列表），仅包含 8084 端口的设备，按后端要求使用 IP 列表
-    final stations = _clientList
-        .where((client) {
-          final ip = client['IP']?.toString() ?? '';
-          if (ip.isEmpty) return false;
-          // 仅保留端口为 8084 的设备（形如 192.168.0.10:8084 或结尾是 8084）
-          return ip.contains(':8084') || ip.endsWith('8084');
-        })
-        .map((client) => client['IP'].toString())
-        .toList();
+    // 获取站点列表（从客户端列表），仅包含 8084 端口的设备。
+    // UI 展示用“报到设备名称”，提交仍然使用 IP 列表（与后端协议一致）。
+    final Map<String, Map<String, String>> stationByIp = {};
+    for (final client in _clientList) {
+      final ip = client['IP']?.toString() ?? '';
+      if (ip.isEmpty) continue;
+      // 仅保留端口为 8084 的设备（形如 192.168.0.10:8084 或结尾是 8084）
+      if (!(ip.contains(':8084') || ip.endsWith('8084'))) continue;
+      final name = (client['StationName'] ??
+              client['Name'] ??
+              client['FacilityTypeName'] ??
+              ip)
+          .toString();
+      stationByIp[ip] = {'ip': ip, 'name': name};
+    }
+    final stations = stationByIp.values.toList();
 
     if (stations.isEmpty) {
       _showMessage('没有可用的站点', isError: true);
@@ -1368,31 +1383,199 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   // 显示数据检查最终结果
   void _showDataCheckFinalResults() {
-    String resultText = '';
-    
     if (_dataCheckResults.isEmpty) {
-      resultText = '检查完成，但未返回详细数据';
-    } else {
-      // 格式化显示所有检查结果
-      for (var i = 0; i < _dataCheckResults.length; i++) {
-        final result = _dataCheckResults[i];
-        final stationName = result['StationName'] ?? '未知站点';
-        resultText += '站点: $stationName\n';
-        
-        // 将结果对象转换为可读的字符串
-        result.forEach((key, value) {
-          if (key != 'StationName') {
-            resultText += '  $key: $value\n';
-          }
-        });
-        resultText += '\n';
-      }
+      _showDataCheckResult(
+        title: '数据检查完成',
+        result: '检查完成，但未返回详细数据',
+        isSuccess: true,
+      );
+      return;
     }
-    
-    _showDataCheckResult(
+
+    _showDataCheckResultList(
       title: '数据检查完成',
-      result: resultText,
+      results: _dataCheckResults,
       isSuccess: true,
+    );
+  }
+
+  int _safeInt(dynamic v) {
+    if (v == null) return 0;
+    if (v is int) return v;
+    if (v is double) return v.toInt();
+    if (v is num) return v.toInt();
+    if (v is String) return int.tryParse(v.trim()) ?? 0;
+    return 0;
+  }
+
+  void _showDataCheckResultList({
+    required String title,
+    required List<Map<String, dynamic>> results,
+    required bool isSuccess,
+  }) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Row(
+            children: [
+              Icon(
+                isSuccess ? Icons.check_circle : Icons.error,
+                color: isSuccess ? Colors.green : Colors.red,
+                size: 24,
+              ),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontFamily: 'Microsoft YaHei',
+                    color: isSuccess ? Colors.green : Colors.red,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: Container(
+            width: double.maxFinite,
+            constraints: BoxConstraints(maxHeight: 420),
+            child: Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade100,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        flex: 2,
+                        child: Text(
+                          '名称',
+                          style: TextStyle(
+                            fontFamily: 'Microsoft YaHei',
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          '会议表',
+                          style: TextStyle(
+                            fontFamily: 'Microsoft YaHei',
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          '人员表',
+                          style: TextStyle(
+                            fontFamily: 'Microsoft YaHei',
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          '代表表',
+                          style: TextStyle(
+                            fontFamily: 'Microsoft YaHei',
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                      Expanded(
+                        child: Text(
+                          '人员基础表',
+                          style: TextStyle(
+                            fontFamily: 'Microsoft YaHei',
+                            fontWeight: FontWeight.bold,
+                          ),
+                          textAlign: TextAlign.center,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                SizedBox(height: 10),
+                Expanded(
+                  child: ListView.separated(
+                    itemCount: results.length,
+                    separatorBuilder: (_, __) => Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final r = results[index];
+                      final stationName =
+                          r['StationName']?.toString() ?? '未知站点';
+
+                      // 映射字段：Meet -> 会议表；PersonInformationPhoto -> 人员表；DelegateRegister -> 代表表；PersonInformation -> 人员基础表
+                      final meet = _safeInt(r['Meet']);
+                      final personTable = _safeInt(r['PersonInformationPhoto']);
+                      final delegateRegister = _safeInt(r['DelegateRegister']);
+                      final personBase = _safeInt(r['PersonInformation']);
+
+                      bool okMeet = meet == 1;
+                      bool okPerson = personTable == 1;
+                      bool okDelegate = delegateRegister == 1;
+                      bool okBase = personBase == 1;
+
+                      Icon statusIcon(bool ok) => Icon(
+                            ok ? Icons.check_circle : Icons.cancel,
+                            size: 22,
+                            color: ok ? Colors.green : Colors.red,
+                          );
+
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 6),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              flex: 2,
+                              child: Text(
+                                stationName,
+                                style: TextStyle(
+                                  fontFamily: '宋体',
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                            Expanded(
+                              child: Center(child: statusIcon(okMeet)),
+                            ),
+                            Expanded(
+                              child: Center(child: statusIcon(okPerson)),
+                            ),
+                            Expanded(
+                              child: Center(child: statusIcon(okDelegate)),
+                            ),
+                            Expanded(
+                              child: Center(child: statusIcon(okBase)),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text('确定',
+                  style: TextStyle(fontFamily: 'Microsoft YaHei')),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -1401,7 +1584,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     if (_isFileImporting) return;
 
     try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
+      FilePickerResult? result = await FilePicker.pickFiles(
         type: FileType.any,
         allowMultiple: false,
       );
@@ -2012,10 +2195,11 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return GridView.builder(
       padding: const EdgeInsets.all(10),
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 7,
+        crossAxisCount: 8,
         mainAxisSpacing: 10,
         crossAxisSpacing: 10,
-        childAspectRatio: 0.8,
+        // 字号增大后需要更高的单元格，避免底部溢出
+        childAspectRatio: 0.74,
       ),
       itemCount: devices.length,
       itemBuilder: (context, index) {
@@ -2125,13 +2309,18 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                   children: [
                     MixedFontText(
                       '出席: ${device['attend']}',
-                      style: TextStyle(fontSize: 12, fontFamily: 'FZXBYS'),
+                      style: const TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        fontFamily: 'FZXBYS',
+                      ),
                     ),
                     SizedBox(height: 2),
                     MixedFontText(
                       '列席: ${device['guest']}',
                       style: TextStyle(
-                        fontSize: 12,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
                         color: Colors.grey[700],
                         fontFamily: 'FZXBYS',
                       ),
@@ -2831,48 +3020,6 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     );
   }
 
-  // 显示管理按钮
-  Widget _buildDisplayButton(String title, IconData icon) {
-    return ElevatedButton.icon(
-      onPressed: () {
-        // 按钮点击功能
-        _handleDisplayButtonClick(title);
-      },
-      icon: Icon(icon, size: 20),
-      label: Text(title),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: HexColor('#A30014'),
-        foregroundColor: Colors.white,
-        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        textStyle: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-      ),
-    );
-  }
-
-  // 处理显示管理按钮点击
-  void _handleDisplayButtonClick(String buttonType) {
-    switch (buttonType) {
-      case '会标':
-        setState(() {
-          _displayManagementType = '会标';
-        });
-        _loadDisplayManagementData();
-        break;
-      case '报到情况':
-        setState(() {
-          _displayManagementType = '报到情况';
-        });
-        _loadDisplayManagementData();
-        break;
-      case '标语':
-        setState(() {
-          _displayManagementType = '标语';
-        });
-        _loadDisplayManagementData();
-        break;
-    }
-  }
-
   Future<void> _loadDisplayManagementData() async {
     if (_isDisplayLoading) return;
     setState(() {
@@ -3251,8 +3398,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: Column(
+      body: Stack(
         children: [
+          Column(
+            children: [
           // 顶部宽幅图片
           Container(
             height: 140,
@@ -3667,6 +3816,47 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
               ),
             ),
           ),
+            ],
+          ),
+          // 全局 loading：用于“数据检查/导入/发送”等需要等待的操作
+          if (_isLoading)
+            Positioned.fill(
+              child: AbsorbPointer(
+                absorbing: true,
+                child: Container(
+                  color: Colors.black.withOpacity(0.25),
+                  child: Center(
+                    child: Card(
+                      elevation: 0,
+                      color: Colors.white.withOpacity(0.9),
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                            SizedBox(width: 12),
+                            Text(
+                              '正在处理...',
+                              style: TextStyle(
+                                fontFamily: 'Microsoft YaHei',
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: HexColor('#A30014'),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -3737,7 +3927,7 @@ class _StationSelectionDialogState extends State<_StationSelectionDialog> {
 
 // 数据检查对话框（包含设备选择和表选择）
 class _DataCheckDialog extends StatefulWidget {
-  final List<String> stations;
+  final List<Map<String, String>> stations;
 
   const _DataCheckDialog({
     required this.stations,
@@ -3774,13 +3964,52 @@ class _DataCheckDialogState extends State<_DataCheckDialog> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(
-                    '选择设备',
-                    style: TextStyle(
-                      fontFamily: 'Microsoft YaHei',
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        '选择设备',
+                        style: TextStyle(
+                          fontFamily: 'Microsoft YaHei',
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          setState(() {
+                            final allIps = widget.stations
+                                .map((e) => e['ip'] ?? '')
+                                .where((ip) => ip.isNotEmpty)
+                                .toSet();
+                            if (_selectedStations.length == allIps.length &&
+                                allIps.isNotEmpty) {
+                              _selectedStations.clear();
+                            } else {
+                              _selectedStations
+                                ..clear()
+                                ..addAll(allIps);
+                            }
+                          });
+                        },
+                        child: Text(
+                          _selectedStations.length ==
+                                      widget.stations
+                                          .map((e) => e['ip'] ?? '')
+                                          .where((ip) => ip.isNotEmpty)
+                                          .toSet()
+                                          .length &&
+                                  widget.stations.isNotEmpty
+                              ? '取消全选'
+                              : '全选',
+                          style: TextStyle(
+                            fontFamily: 'Microsoft YaHei',
+                            color: HexColor('#A30014'),
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                   SizedBox(height: 8),
                   Expanded(
@@ -3794,18 +4023,33 @@ class _DataCheckDialogState extends State<_DataCheckDialog> {
                         itemCount: widget.stations.length,
                         itemBuilder: (context, index) {
                           final station = widget.stations[index];
-                          final isSelected = _selectedStations.contains(station);
+                          final ip = station['ip'] ?? '';
+                          final name = station['name'] ?? ip;
+                          final isSelected = _selectedStations.contains(ip);
                           return CheckboxListTile(
-                            title: Text(station, style: TextStyle(fontFamily: 'Microsoft YaHei')),
+                            title: Text(
+                              name,
+                              style: TextStyle(fontFamily: 'Microsoft YaHei'),
+                            ),
+                            subtitle: ip.isNotEmpty
+                                ? Text(
+                                    ip,
+                                    style: TextStyle(
+                                      fontFamily: 'Microsoft YaHei',
+                                      fontSize: 12,
+                                      color: Colors.grey[600],
+                                    ),
+                                  )
+                                : null,
                             value: isSelected,
                             dense: true,
                             contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 0),
                             onChanged: (bool? value) {
                               setState(() {
                                 if (value == true) {
-                                  _selectedStations.add(station);
+                                  if (ip.isNotEmpty) _selectedStations.add(ip);
                                 } else {
-                                  _selectedStations.remove(station);
+                                  _selectedStations.remove(ip);
                                 }
                               });
                             },

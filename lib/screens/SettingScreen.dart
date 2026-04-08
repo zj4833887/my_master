@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
 import './MeetingDetailScreen.dart';
-import 'package:hexcolor/hexcolor.dart';
 import '../scc/scc_client.dart';
 import '../widgets/mixed_font_text.dart';
+import '../utils/hex_color.dart';
 
 // 会议数据模型
 class MeetingData {
