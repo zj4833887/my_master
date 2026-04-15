@@ -17,7 +17,7 @@ jobs:
         run: |
           git clone https://github.com/flutter/flutter.git -b stable --depth 1 "$HOME/flutter"
           echo "$HOME/flutter/bin" >> $GITHUB_PATH
-          flutter --version
+          "$HOME/flutter/bin/flutter" --version
 
       - name: Install Linux dependencies
         run: |
