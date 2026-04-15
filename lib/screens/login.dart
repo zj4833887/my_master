@@ -1,7 +1,7 @@
 // 导入Flutter Material Design组件库，这是构建Material风格UI的基础
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import './settingScreen.dart'; // 导入设置页面
+import './SettingScreen.dart'; // 导入设置页面
 import '../scc/scc_client.dart'; // 导入 gRPC 客户端
 
 /// 应用的主入口函数
