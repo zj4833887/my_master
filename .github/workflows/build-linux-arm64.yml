@@ -13,25 +13,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Flutter (native on ARM runner)
+      - name: Build in Ubuntu 20.04 ARM container
         run: |
-          git clone https://github.com/flutter/flutter.git -b stable --depth 1 "$HOME/flutter"
-          echo "$HOME/flutter/bin" >> $GITHUB_PATH
-          "$HOME/flutter/bin/flutter" --version
-
-      - name: Install Linux dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev
-
-      - name: Enable Linux desktop
-        run: flutter config --enable-linux-desktop
-
-      - name: Get packages
-        run: flutter pub get
-
-      - name: Build for Linux ARM64
-        run: flutter build linux --release
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            ubuntu:20.04 \
+            bash -lc '
+              set -eux
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update
+              apt-get install -y --no-install-recommends \
+                ca-certificates curl git unzip xz-utils zip \
+                clang cmake ninja-build pkg-config libgtk-3-dev libasound2-dev
+              git config --global --add safe.directory /workspace
+              git clone https://github.com/flutter/flutter.git -b stable --depth 1 /opt/flutter
+              export PATH=/opt/flutter/bin:$PATH
+              flutter --version
+              flutter config --enable-linux-desktop
+              flutter pub get
+              flutter build linux --release
+            '
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
