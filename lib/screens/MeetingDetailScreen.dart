@@ -1167,23 +1167,27 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       return;
     }
 
-    // 获取站点列表（从客户端列表），仅包含 8084 端口的设备，按后端要求使用 IP 列表
-    final stations = _clientList
-        .where((client) {
-          final ip = client['IP']?.toString() ?? '';
-          if (ip.isEmpty) return false;
-          // 仅保留端口为 8084 的设备（形如 192.168.0.10:8084 或结尾是 8084）
-          return ip.contains(':8084') || ip.endsWith('8084');
-        })
-        .map((client) => client['IP'].toString())
-        .toList();
+    // 获取站点列表（从客户端列表），仅包含 8084 端口的设备。
+    // 界面展示报到设备名称，提交仍使用 IP 列表。
+    final Map<String, Map<String, String>> stationByIp = {};
+    for (final client in _clientList) {
+      final ip = client['IP']?.toString() ?? '';
+      if (ip.isEmpty) continue;
+      if (!(ip.contains(':8084') || ip.endsWith('8084'))) continue;
+      final name = (client['StationName'] ??
+              client['Name'] ??
+              client['FacilityTypeName'] ??
+              ip)
+          .toString();
+      stationByIp[ip] = {'ip': ip, 'name': name};
+    }
+    final stations = stationByIp.values.toList();
 
     if (stations.isEmpty) {
       _showMessage('没有可用的站点', isError: true);
       return;
     }
 
-    // 显示站点选择对话框（展示 IP，实际上传的也是 IP 列表）
     final selectedStations = await showDialog<List<String>>(
       context: context,
       builder: (BuildContext context) {
@@ -1584,17 +1588,62 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     if (_isFileImporting) return;
 
     try {
-      FilePickerResult? result = await FilePicker.pickFiles(
-        type: FileType.any,
-        allowMultiple: false,
-      );
-
-      if (result != null && result.files.single.path != null) {
-        final filePath = result.files.single.path!;
+      final filePath = await _pickSingleFilePath();
+      if (filePath != null && filePath.isNotEmpty) {
         await _importFileFromPath(filePath);
       }
     } catch (e) {
       _showMessage('文件选择失败: $e', isError: true);
+    }
+  }
+
+  /// Linux 上 `file_picker` 依赖 XDG Desktop Portal；无 portal 时对话框不会出现。
+  /// 优先用 zenity / kdialog，最后再回退到 FilePicker。
+  Future<String?> _pickSingleFilePath() async {
+    if (Platform.isLinux) {
+      final zenity = await _whichExecutable('zenity');
+      if (zenity != null) {
+        final r = await Process.run(zenity, [
+          '--file-selection',
+          '--title=选择文件',
+        ]);
+        if (r.exitCode == 0) {
+          final p = r.stdout.toString().trim();
+          if (p.isNotEmpty) return p;
+        }
+        if (r.exitCode == 1) return null;
+      }
+
+      final kdialog = await _whichExecutable('kdialog');
+      if (kdialog != null) {
+        final home = Platform.environment['HOME'] ?? '.';
+        final r = await Process.run(kdialog, [
+          '--getopenfilename',
+          home,
+        ]);
+        if (r.exitCode == 0) {
+          final p = r.stdout.toString().trim();
+          if (p.isNotEmpty) return p;
+        }
+        if (r.exitCode == 1) return null;
+      }
+    }
+
+    final result = await FilePicker.pickFiles(
+      type: FileType.any,
+      allowMultiple: false,
+    );
+    return result?.files.single.path;
+  }
+
+  Future<String?> _whichExecutable(String name) async {
+    try {
+      final r = await Process.run('which', [name]);
+      if (r.exitCode != 0) return null;
+      final path = r.stdout.toString().trim();
+      return path.isEmpty ? null : path;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -1987,6 +2036,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     final Map<String, String> deviceStatusMap = {};
     final Map<String, bool> port1030Map = {};
     final Map<String, bool> port8084Map = {};
+    final Map<String, String> facilityNameMap = {};
     for (var device in _devices) {
       final deviceName = device['name']?.toString() ?? '';
       final deviceStatus = device['status']?.toString() ?? '';
@@ -1996,6 +2046,19 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
       final bool isPort1030 = ip != null && ip.trim().endsWith(':1030');
       final bool isPort8084 = ip != null && ip.trim().endsWith(':8084');
+
+      if (deviceName.isNotEmpty) {
+        facilityNameMap[deviceName] = deviceName;
+      }
+      if (nodeId != null && deviceName.isNotEmpty) {
+        facilityNameMap[nodeId.toString()] = deviceName;
+      }
+      if (facilityId != null && deviceName.isNotEmpty) {
+        facilityNameMap[facilityId.toString()] = deviceName;
+      }
+      if (ip != null && ip.isNotEmpty && deviceName.isNotEmpty) {
+        facilityNameMap[ip] = deviceName;
+      }
 
       if (deviceName.isNotEmpty && deviceStatus.isNotEmpty) {
         deviceStatusMap[deviceName] = deviceStatus;
@@ -2031,6 +2094,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
               deviceStatusMap: deviceStatusMap,
               port8084Map: port8084Map,
               port1030Map: port1030Map,
+              facilityNameMap: facilityNameMap,
+              stationStats: _stationStats,
               onCabinetTap: (facilityId) {
                 _selectedFacilityIdNotifier.value = facilityId;
               },
@@ -3863,9 +3928,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   }
 }
 
-// 站点选择对话框
+// 站点选择对话框（列表展示设备名称，返回值仍为 IP 列表供接口使用）
 class _StationSelectionDialog extends StatefulWidget {
-  final List<String> stations;
+  final List<Map<String, String>> stations;
   final String title;
 
   const _StationSelectionDialog({
@@ -3892,16 +3957,31 @@ class _StationSelectionDialogState extends State<_StationSelectionDialog> {
           itemCount: widget.stations.length,
           itemBuilder: (context, index) {
             final station = widget.stations[index];
-            final isSelected = _selectedStations.contains(station);
+            final ip = station['ip'] ?? '';
+            final name = station['name'] ?? ip;
+            final isSelected = _selectedStations.contains(ip);
             return CheckboxListTile(
-              title: Text(station, style: TextStyle(fontFamily: 'Microsoft YaHei')),
+              title: Text(
+                name,
+                style: TextStyle(fontFamily: 'Microsoft YaHei'),
+              ),
+              subtitle: ip.isNotEmpty
+                  ? Text(
+                      ip,
+                      style: TextStyle(
+                        fontFamily: 'Microsoft YaHei',
+                        fontSize: 12,
+                        color: Colors.grey[600],
+                      ),
+                    )
+                  : null,
               value: isSelected,
               onChanged: (bool? value) {
                 setState(() {
                   if (value == true) {
-                    _selectedStations.add(station);
+                    if (ip.isNotEmpty) _selectedStations.add(ip);
                   } else {
-                    _selectedStations.remove(station);
+                    _selectedStations.remove(ip);
                   }
                 });
               },

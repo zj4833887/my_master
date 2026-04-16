@@ -23,6 +23,9 @@ class FacilityPoint {
   final String cameraUri;
   final String ip;
 
+  /// 后端返回的报到设备名称（若有）
+  final String? stationName;
+
   const FacilityPoint({
     required this.facilityId,
     required this.facilityType,
@@ -30,6 +33,7 @@ class FacilityPoint {
     required this.y,
     required this.cameraUri,
     required this.ip,
+    this.stationName,
   });
 
   factory FacilityPoint.fromBackend(
@@ -47,6 +51,11 @@ class FacilityPoint {
     final relativeX = canvasWidth == 0 ? 0.5 : rawX / canvasWidth;
     final relativeY = canvasHeight == 0 ? 0.5 : rawY / canvasHeight;
 
+    final stationName = json['StationName']?.toString() ??
+        json['stationName']?.toString() ??
+        json['Name']?.toString() ??
+        json['name']?.toString();
+
     return FacilityPoint(
       facilityId: json['FacilityID']?.toString() ??
           json['facilityId']?.toString() ??
@@ -60,6 +69,9 @@ class FacilityPoint {
           json['stream']?.toString() ??
           '',
       ip: json['IP']?.toString() ?? '',
+      stationName: (stationName != null && stationName.isNotEmpty)
+          ? stationName
+          : null,
     );
   }
 
@@ -455,6 +467,8 @@ class DeviceMapWidget extends StatefulWidget {
     this.deviceStatusMap, // 设备状态映射：facilityId -> status
     this.port1030Map, // 设备是否 1030 端口：facilityId -> true/false
     this.port8084Map, // 设备是否 8084 端口：facilityId -> true/false
+    this.facilityNameMap, // 设备显示名称：与 deviceStatusMap 相同的 key（FacilityID/IP/名称等）-> 名称
+    this.stationStats, // 站点人数：IP -> { attend, guest }（与 WS_StationNum 一致）
   });
 
   final Function(String)? onCabinetTap; // 点击机柜/设备的回调
@@ -463,6 +477,8 @@ class DeviceMapWidget extends StatefulWidget {
   final Map<String, String>? deviceStatusMap; // 设备状态映射：facilityId -> status (空闲/报到/工作/重报)
   final Map<String, bool>? port1030Map; // 设备是否 1030 端口：facilityId -> true/false
   final Map<String, bool>? port8084Map; // 设备是否 8084 端口：facilityId -> true/false
+  final Map<String, String>? facilityNameMap;
+  final Map<String, Map<String, int>>? stationStats;
 
   @override
   State<DeviceMapWidget> createState() => _DeviceMapWidgetState();
@@ -604,6 +620,38 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
         false;
   }
 
+  String _resolveDisplayName(FacilityPoint point) {
+    final m = widget.facilityNameMap;
+    if (m != null) {
+      final byFacility = m[point.facilityId];
+      if (byFacility != null && byFacility.isNotEmpty) return byFacility;
+      if (point.ip.isNotEmpty) {
+        final byIp = m[point.ip];
+        if (byIp != null && byIp.isNotEmpty) return byIp;
+      }
+      if (point.cameraUri.isNotEmpty) {
+        final byCam = m[point.cameraUri];
+        if (byCam != null && byCam.isNotEmpty) return byCam;
+      }
+    }
+    final sn = point.stationName;
+    if (sn != null && sn.isNotEmpty) return sn;
+    return point.facilityId;
+  }
+
+  ({int attend, int guest}) _resolveAttendGuest(FacilityPoint point) {
+    final stats = widget.stationStats;
+    if (stats == null || point.ip.isEmpty) {
+      return (attend: 0, guest: 0);
+    }
+    final row = stats[point.ip];
+    if (row == null) return (attend: 0, guest: 0);
+    return (
+      attend: row['attend'] ?? 0,
+      guest: row['guest'] ?? 0,
+    );
+  }
+
   ImageProvider<Object> _buildBgImage(FacilityRouteSettings settings) {
     final bytes = settings.bgBytes;
     if (bytes != null && bytes.isNotEmpty) {
@@ -654,10 +702,18 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     const double markerWidth = 20;
     final double effectiveHeight = isPort8084 ? markerHeight : 20;
 
+    final displayName = _resolveDisplayName(point);
+    final counts = _resolveAttendGuest(point);
+    final tooltipBuf = StringBuffer()
+      ..writeln('设备名称：$displayName')
+      ..writeln('状态：${status ?? '未知状态'}')
+      ..writeln('出席人数：${counts.attend}')
+      ..writeln('列席人数：${counts.guest}');
+
     return GestureDetector(
       onTap: () => onTap?.call(point.facilityId),
       child: Tooltip(
-        message: '${point.facilityId}\n${status ?? '未知状态'}\n${point.cameraUri}',
+        message: tooltipBuf.toString().trimRight(),
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           width: markerWidth,
