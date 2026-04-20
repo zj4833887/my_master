@@ -25,7 +25,8 @@ jobs:
               apt-get update
               apt-get install -y --no-install-recommends \
                 ca-certificates curl git unzip xz-utils zip \
-                clang cmake ninja-build pkg-config libgtk-3-dev libasound2-dev
+                clang cmake ninja-build pkg-config libgtk-3-dev libasound2-dev \
+                llvm-10 lld-10 build-essential
               git config --global --add safe.directory /workspace
               git clone https://github.com/flutter/flutter.git -b stable --depth 1 /opt/flutter
               export PATH=/opt/flutter/bin:$PATH

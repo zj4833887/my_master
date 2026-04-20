@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:file_picker/file_picker.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter_html/flutter_html.dart';
 import '../scc/scc_client.dart';
 import '../scc/board.dart';
@@ -689,6 +689,14 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           '请假': specialleavenum,
           '实缺': specialNotyet - specialleavenum,
         };
+
+        // 打印 gRPC/WS 返回的人数数据，便于联调核对
+        debugPrint(
+          '[MeetInfo] grpc人数: '
+          '应到=$personnum, 实到=$personattendancenum, 未到=$notyet, 请假=$personleavenum, 实缺=${notyet - personleavenum}; '
+          '列席应到=$specialnum, 列席实到=$specialnattendancenum, 列席未到=$specialNotyet, 列席请假=$specialleavenum, 列席实缺=${specialNotyet - specialleavenum}; '
+          'rawNums=$nums',
+        );
       }
     });
   }
@@ -1597,54 +1605,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     }
   }
 
-  /// Linux 上 `file_picker` 依赖 XDG Desktop Portal；无 portal 时对话框不会出现。
-  /// 优先用 zenity / kdialog，最后再回退到 FilePicker。
   Future<String?> _pickSingleFilePath() async {
-    if (Platform.isLinux) {
-      final zenity = await _whichExecutable('zenity');
-      if (zenity != null) {
-        final r = await Process.run(zenity, [
-          '--file-selection',
-          '--title=选择文件',
-        ]);
-        if (r.exitCode == 0) {
-          final p = r.stdout.toString().trim();
-          if (p.isNotEmpty) return p;
-        }
-        if (r.exitCode == 1) return null;
-      }
-
-      final kdialog = await _whichExecutable('kdialog');
-      if (kdialog != null) {
-        final home = Platform.environment['HOME'] ?? '.';
-        final r = await Process.run(kdialog, [
-          '--getopenfilename',
-          home,
-        ]);
-        if (r.exitCode == 0) {
-          final p = r.stdout.toString().trim();
-          if (p.isNotEmpty) return p;
-        }
-        if (r.exitCode == 1) return null;
-      }
-    }
-
-    final result = await FilePicker.pickFiles(
-      type: FileType.any,
-      allowMultiple: false,
-    );
-    return result?.files.single.path;
-  }
-
-  Future<String?> _whichExecutable(String name) async {
-    try {
-      final r = await Process.run('which', [name]);
-      if (r.exitCode != 0) return null;
-      final path = r.stdout.toString().trim();
-      return path.isEmpty ? null : path;
-    } catch (_) {
-      return null;
-    }
+    final file = await openFile();
+    return file?.path;
   }
 
   Future<bool> _importFileFromPath(String filePath) async {
@@ -3094,6 +3057,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     try {
       if (_displayManagementType == '标语') {
         final result = await SccClientWrapper.querySlogan();
+        debugPrint(
+          '[DisplayManagement] querySlogan result: success=${result.isSuccess}, msg=${result.msg}, data=${result.data}',
+        );
         if (!result.isSuccess) {
           _showMessage(result.msg, isError: true);
           setState(() {
@@ -3112,6 +3078,11 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           if (maybe is List) {
             list = maybe;
           }
+        }
+        if (list.isNotEmpty) {
+          debugPrint('[DisplayManagement] querySlogan first item: ${list.first}');
+        } else {
+          debugPrint('[DisplayManagement] querySlogan list is empty');
         }
 
         // vue 里会给每条 tem.state = true，这里同样做一次增强字段，供后续扩展使用
