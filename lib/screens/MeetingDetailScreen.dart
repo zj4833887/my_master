@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter_html/flutter_html.dart';
 import '../scc/scc_client.dart';
@@ -56,6 +57,10 @@ class MeetingDetailScreen extends StatefulWidget {
 
 class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     with SingleTickerProviderStateMixin {
+  void _logSloganApi(String message) {
+    debugPrint('[SloganAPI] $message');
+  }
+
   late TabController _tabController;
   bool _isMeetingManagementSelected = true;
 
@@ -106,6 +111,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   // 数据检查相关
   Timer? _dataCheckTimer;
   List<Map<String, dynamic>> _dataCheckResults = [];
+  List<String> _selectedDataCheckTables = [];
   Timer? _usbAutoImportTimer;
   bool _isUsbAutoImporting = false;
   Set<String> _knownUsbRoots = {};
@@ -116,12 +122,29 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   bool _isFileImporting = false;
 
   // 通知信息（右侧卡片）
-  String _notificationText = '这里显示通知信息';
+  String _notificationText = '';
+
+  String get _defaultMeetingStatusText {
+    switch (_meetStatus) {
+      case 1:
+        return '会议正在进行';
+      case 2:
+        return '会议已经结束';
+      case 0:
+      default:
+        return '会议暂未开始';
+    }
+  }
 
   // 显示管理（会标/报到情况/标语）状态与数据
   String _displayManagementType = '标语';
   bool _isDisplayLoading = false;
   List<dynamic> _sloganTableData = [];
+  List<dynamic> _sloganBannerItems = [];
+  List<dynamic> _sloganCheckInItems = [];
+  bool _showSloganTable = false;
+  dynamic _pendingQuickDisplayItem;
+  String _pendingQuickDisplayType = '';
   final Set<int> _sloganPreviewedRowIndices = {};
   bool _isSendingSlogan = false;
   bool _isSloganPreviewVisible = false;
@@ -426,7 +449,6 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   }
 
   Future<bool> _updateProgressStep(int newIndex) async {
-    print('217updateProgressStep: $newIndex');
     if (!mounted) return false;
     if (_isStepUpdating ||
         newIndex < 0 ||
@@ -444,7 +466,6 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         step: targetStep,
         meetID: widget.meetId,
       );
-      print('235result: $result');
       if (result.isSuccess && result.data == true) {
         // 成功后重新拉取，以服务器状态为准
         await _loadProgressStep();
@@ -591,7 +612,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           // 根据会议状态更新标题显示和按钮状态
           switch (_meetStatus) {
             case 0:
-              _meetingTitle = '会议暂未开启';
+              _meetingTitle = '会议暂未开始';
               _isMeetingStarted = false;
               break;
             case 1:
@@ -599,7 +620,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
               _isMeetingStarted = true;
               break;
             case 2:
-              _meetingTitle = '会议结束';
+              _meetingTitle = '会议已经结束';
               _isMeetingStarted = false;
               break;
             default:
@@ -661,10 +682,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       
       if (nums != null && nums.isNotEmpty) {
         // 出席统计数据
-        final personnum = _parseInt(nums['Personnum'] ?? 0);
-        final personattendancenum = _parseInt(nums['Personattendancenum'] ?? 0);
-        final personleavenum = _parseInt(nums['Personleavenum'] ?? 0);
-        final notyet = personnum - personattendancenum; // 未到
+        final personnum = _nonNegativeInt(nums['Personnum'] ?? 0);
+        final personattendancenum = _nonNegativeInt(nums['Personattendancenum'] ?? 0);
+        final personleavenum = _nonNegativeInt(nums['Personleavenum'] ?? 0);
+        final notyet = math.max(0, personnum - personattendancenum); // 未到
 
         // 创建新的 Map 以确保 setState 能检测到变化
         attendStats = {
@@ -672,14 +693,15 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           '实到': personattendancenum,
           '未到': notyet,
           '请假': personleavenum,
-          '实缺': notyet - personleavenum,
+          '实缺': math.max(0, notyet - personleavenum),
         };
 
         // 列席统计数据
-        final specialnum = _parseInt(nums['Specialnum'] ?? 0);
-        final specialnattendancenum = _parseInt(nums['Specialnattendancenum'] ?? 0);
-        final specialleavenum = _parseInt(nums['Specialleavenum'] ?? 0);
-        final specialNotyet = specialnum - specialnattendancenum; // 列席未到
+        final specialnum = _nonNegativeInt(nums['Specialnum'] ?? 0);
+        final specialnattendancenum =
+            _nonNegativeInt(nums['Specialnattendancenum'] ?? 0);
+        final specialleavenum = _nonNegativeInt(nums['Specialleavenum'] ?? 0);
+        final specialNotyet = math.max(0, specialnum - specialnattendancenum); // 列席未到
 
         // 创建新的 Map 以确保 setState 能检测到变化
         guestStats = {
@@ -687,25 +709,16 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           '实到': specialnattendancenum,
           '未到': specialNotyet,
           '请假': specialleavenum,
-          '实缺': specialNotyet - specialleavenum,
+          '实缺': math.max(0, specialNotyet - specialleavenum),
         };
 
-        // 打印 gRPC/WS 返回的人数数据，便于联调核对
-        debugPrint(
-          '[MeetInfo] grpc人数: '
-          '应到=$personnum, 实到=$personattendancenum, 未到=$notyet, 请假=$personleavenum, 实缺=${notyet - personleavenum}; '
-          '列席应到=$specialnum, 列席实到=$specialnattendancenum, 列席未到=$specialNotyet, 列席请假=$specialleavenum, 列席实缺=${specialNotyet - specialleavenum}; '
-          'rawNums=$nums',
-        );
+        // 其他接口日志已关闭，仅保留标语接口日志
       }
     });
   }
 
   // 处理报到信息 (WS_CheckInInfo)
   void _handleCheckInInfo(Map<String, dynamic> data) {
-    final inner = data['data'] is Map ? data['data'] as Map<String, dynamic> : {};
-    print(
-        '[CheckIn] parsed NodeID=${inner['NodeID']} CheckInSatus=${inner['CheckInSatus']} raw=$data');
     if (data['code'] != 200) return;
 
     final nodeID = data['data']?['NodeID'];
@@ -944,6 +957,11 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return 0;
   }
 
+  int _nonNegativeInt(dynamic value) {
+    final parsed = _parseInt(value);
+    return parsed < 0 ? 0 : parsed;
+  }
+
   Future<void> _onAttendDeviceTap(Map<dynamic, dynamic> device) async {
     final ip = device['IP']?.toString() ?? '';
     if (ip.isEmpty) return;
@@ -1098,7 +1116,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       final result = await SccClientWrapper.startMeet(widget.meetId!);
       if (result.isSuccess) {
         setState(() {
+          _meetStatus = 1;
           _isMeetingStarted = true;
+          _meetingTitle = '会议正在进行';
         });
         _showMessage('会议开始成功');
       } else {
@@ -1153,7 +1173,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       final result = await SccClientWrapper.endMeet(widget.meetId!);
       if (result.isSuccess) {
         setState(() {
+          _meetStatus = 2;
           _isMeetingStarted = false;
+          _meetingTitle = '会议已经结束';
         });
         _showMessage('会议结束成功');
       } else {
@@ -1295,13 +1317,12 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     setState(() {
       _isLoading = true;
       _dataCheckResults = []; // 清空之前的结果
+      _selectedDataCheckTables = List<String>.from(selectedTables);
     });
 
     try {
-      print('检查开始');
       // 1. 先结束之前的检查
       await SccClientWrapper.endDatabaseCheck();
-      print('结束检查');
       // 2. 显示开始检查的消息
       _showMessage('开始校验', isError: false);
       
@@ -1407,6 +1428,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     _showDataCheckResultList(
       title: '数据检查完成',
       results: _dataCheckResults,
+      selectedTables: _selectedDataCheckTables,
       isSuccess: true,
     );
   }
@@ -1423,8 +1445,21 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   void _showDataCheckResultList({
     required String title,
     required List<Map<String, dynamic>> results,
+    required List<String> selectedTables,
     required bool isSuccess,
   }) {
+    final allColumns = <Map<String, String>>[
+      {'id': 'meet', 'title': '会议表', 'field': 'Meet'},
+      {'id': 'personinformationphoto', 'title': '人员表', 'field': 'PersonInformationPhoto'},
+      {'id': 'delegateregister', 'title': '代表表', 'field': 'DelegateRegister'},
+      {'id': 'personinformation', 'title': '人员基础表', 'field': 'PersonInformation'},
+    ];
+    final selectedSet =
+        selectedTables.map((e) => e.toLowerCase().trim()).toSet();
+    final visibleColumns = selectedSet.isEmpty
+        ? allColumns
+        : allColumns.where((c) => selectedSet.contains(c['id'])).toList();
+
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -1472,44 +1507,16 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                           textAlign: TextAlign.center,
                         ),
                       ),
-                      Expanded(
-                        child: Text(
-                          '会议表',
-                          style: TextStyle(
-                            fontFamily: 'Microsoft YaHei',
-                            fontWeight: FontWeight.bold,
+                      ...visibleColumns.map(
+                        (column) => Expanded(
+                          child: Text(
+                            column['title'] ?? '',
+                            style: TextStyle(
+                              fontFamily: 'Microsoft YaHei',
+                              fontWeight: FontWeight.bold,
+                            ),
+                            textAlign: TextAlign.center,
                           ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                      Expanded(
-                        child: Text(
-                          '人员表',
-                          style: TextStyle(
-                            fontFamily: 'Microsoft YaHei',
-                            fontWeight: FontWeight.bold,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                      Expanded(
-                        child: Text(
-                          '代表表',
-                          style: TextStyle(
-                            fontFamily: 'Microsoft YaHei',
-                            fontWeight: FontWeight.bold,
-                          ),
-                          textAlign: TextAlign.center,
-                        ),
-                      ),
-                      Expanded(
-                        child: Text(
-                          '人员基础表',
-                          style: TextStyle(
-                            fontFamily: 'Microsoft YaHei',
-                            fontWeight: FontWeight.bold,
-                          ),
-                          textAlign: TextAlign.center,
                         ),
                       ),
                     ],
@@ -1525,21 +1532,14 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                       final stationName =
                           r['StationName']?.toString() ?? '未知站点';
 
-                      // 映射字段：Meet -> 会议表；PersonInformationPhoto -> 人员表；DelegateRegister -> 代表表；PersonInformation -> 人员基础表
-                      final meet = _safeInt(r['Meet']);
-                      final personTable = _safeInt(r['PersonInformationPhoto']);
-                      final delegateRegister = _safeInt(r['DelegateRegister']);
-                      final personBase = _safeInt(r['PersonInformation']);
-
-                      bool okMeet = meet == 1;
-                      bool okPerson = personTable == 1;
-                      bool okDelegate = delegateRegister == 1;
-                      bool okBase = personBase == 1;
-
-                      Icon statusIcon(bool ok) => Icon(
-                            ok ? Icons.check_circle : Icons.cancel,
-                            size: 22,
-                            color: ok ? Colors.green : Colors.red,
+                      Widget statusMark(bool ok) => Text(
+                            ok ? '✓' : '❕',
+                            style: TextStyle(
+                              fontSize: 22,
+                              fontWeight: FontWeight.bold,
+                              color: ok ? Colors.green : Colors.red,
+                              fontFamily: 'Microsoft YaHei',
+                            ),
                           );
 
                       return Padding(
@@ -1558,18 +1558,13 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                 textAlign: TextAlign.center,
                               ),
                             ),
-                            Expanded(
-                              child: Center(child: statusIcon(okMeet)),
-                            ),
-                            Expanded(
-                              child: Center(child: statusIcon(okPerson)),
-                            ),
-                            Expanded(
-                              child: Center(child: statusIcon(okDelegate)),
-                            ),
-                            Expanded(
-                              child: Center(child: statusIcon(okBase)),
-                            ),
+                            ...visibleColumns.map((column) {
+                              final field = column['field'] ?? '';
+                              final ok = _safeInt(r[field]) == 1;
+                              return Expanded(
+                                child: Center(child: statusMark(ok)),
+                              );
+                            }),
                           ],
                         ),
                       );
@@ -2480,126 +2475,237 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   // 显示管理内容
   Widget _buildDisplayManagementContent() {
+    final hasBanner = _sloganBannerItems.isNotEmpty;
+    final hasCheckIn = _sloganCheckInItems.isNotEmpty;
+    final hasSlogan = _sloganTableData.isNotEmpty;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Container(
-        // 上半部分严格只显示表格
-        decoration: BoxDecoration(
-          border: Border.all(color: Colors.grey[300]!),
-          borderRadius: BorderRadius.circular(4),
-        ),
-        child: SizedBox(
-              height: 150, // 固定高度（更紧凑，避免挤占下方）
-          child: Column(
+      child: Column(
+        children: [
+          Row(
             children: [
-                  // 表头
-                  Container(
-                    padding: EdgeInsets.symmetric(
-                      vertical: 12,
-                      horizontal: 16,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[100],
-                      border: Border(
-                        bottom: BorderSide(color: Colors.grey[300]!),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          flex: 1,
-                          child: Text(
-                            '序号',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black87,
-                              fontFamily: 'Microsoft YaHei',
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          flex: 3,
-                          child: Text(
-                            '内容',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black87,
-                              fontFamily: 'Microsoft YaHei',
-                            ),
-                          ),
-                        ),
-                        Expanded(
-                          flex: 2,
-                          child: Text(
-                            '操作',
-                            style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              color: Colors.black87,
-                              fontFamily: 'Microsoft YaHei',
-                            ),
-                          ),
-                        ),
-                      ],
+              _buildDisplayTypeButton(
+                label: '会标',
+                enabled: hasBanner && !_isDisplayLoading,
+                selected: _displayManagementType == '会标',
+                onTap: hasBanner
+                    ? () {
+                        setState(() {
+                          _displayManagementType = '会标';
+                          _showSloganTable = false;
+                        });
+                        _previewQuickDisplayType(
+                          item: _sloganBannerItems.first,
+                          type: '会标',
+                        );
+                      }
+                    : null,
+              ),
+              const SizedBox(width: 10),
+              _buildDisplayTypeButton(
+                label: '报到情况',
+                enabled: hasCheckIn && !_isDisplayLoading,
+                selected: _displayManagementType == '报到情况',
+                onTap: hasCheckIn
+                    ? () {
+                        setState(() {
+                          _displayManagementType = '报到情况';
+                          _showSloganTable = false;
+                        });
+                        _previewQuickDisplayType(
+                          item: _sloganCheckInItems.first,
+                          type: '报到情况',
+                        );
+                      }
+                    : null,
+              ),
+              const SizedBox(width: 10),
+              _buildDisplayTypeButton(
+                label: '标语',
+                enabled: hasSlogan && !_isDisplayLoading,
+                selected: _displayManagementType == '标语',
+                onTap: hasSlogan
+                    ? () {
+                        setState(() {
+                          _displayManagementType = '标语';
+                          _showSloganTable = true;
+                          _pendingQuickDisplayItem = null;
+                          _pendingQuickDisplayType = '';
+                        });
+                      }
+                    : null,
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (_pendingQuickDisplayItem != null) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey[300]!),
+                borderRadius: BorderRadius.circular(4),
+                color: Colors.white,
+              ),
+              child: Row(
+                children: [
+                  Text(
+                    '$_pendingQuickDisplayType 预览',
+                    style: const TextStyle(
+                      fontFamily: 'Microsoft YaHei',
+                      fontWeight: FontWeight.bold,
                     ),
                   ),
-
-                  // 表格内容（占满剩余高度）
-                  Expanded(
-                    child: _displayManagementType == '标语'
-                        ? (_isDisplayLoading
-                            ? const Center(
-                                child: CircularProgressIndicator(),
-                              )
-                            : (_sloganTableData.isEmpty
-                                ? Center(
-                                    child: Text(
-                                      '空',
-                                      style: TextStyle(
-                                        fontSize: 16,
-                                        color: Colors.grey[600],
-                                        fontFamily: 'Microsoft YaHei',
-                                      ),
-                                    ),
-                                  )
-                                : Scrollbar(
-                                    thumbVisibility: true,
-                                    child: SingleChildScrollView(
-                                      child: Column(
-                                        children: _sloganTableData
-                                            .asMap()
-                                            .entries
-                                            .map((e) =>
-                                                _buildSloganRow(e.key, e.value))
-                                            .toList(),
-                                      ),
-                                    ),
-                                  )))
-                        : const Center(child: Text('空')),
+                  const Spacer(),
+                  TextButton(
+                    onPressed:
+                        (_isSendingSlogan || !_sloganPreviewedRowIndices.contains(-1))
+                            ? null
+                            : _confirmQuickDisplayType,
+                    child: const Text('确认发送'),
                   ),
                 ],
-          ),
-        ),
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
+          if (_showSloganTable)
+            SizedBox(
+              height: 150,
+              child: Container(
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.grey[300]!),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[100],
+                        border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Expanded(
+                            flex: 1,
+                            child: Text(
+                              '序号',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87,
+                                fontFamily: 'Microsoft YaHei',
+                              ),
+                            ),
+                          ),
+                          const Expanded(
+                            flex: 3,
+                            child: Text(
+                              '内容',
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black87,
+                                fontFamily: 'Microsoft YaHei',
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            flex: 2,
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  '操作',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.black87,
+                                    fontFamily: 'Microsoft YaHei',
+                                  ),
+                                ),
+                                InkWell(
+                                  onTap: () {
+                                    setState(() {
+                                      _showSloganTable = false;
+                                    });
+                                  },
+                                  child: const Icon(Icons.close, size: 18),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: _isDisplayLoading
+                          ? const Center(child: CircularProgressIndicator())
+                          : (_sloganTableData.isEmpty
+                              ? Center(
+                                  child: Text(
+                                    '空',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      color: Colors.grey[600],
+                                      fontFamily: 'Microsoft YaHei',
+                                    ),
+                                  ),
+                                )
+                              : Scrollbar(
+                                  thumbVisibility: true,
+                                  child: SingleChildScrollView(
+                                    child: Column(
+                                      children: _sloganTableData
+                                          .asMap()
+                                          .entries
+                                          .map((e) => _buildSloganRow(e.key, e.value))
+                                          .toList(),
+                                    ),
+                                  ),
+                                )),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
 
   // 会议管理内容（原有的功能按钮区域）
   Widget _buildMeetingManagementContent() {
+    final String meetingActionText;
+    final IconData meetingActionIcon;
+    final VoidCallback? meetingActionTap;
+    if (_meetStatus == 2) {
+      meetingActionText = '已结束';
+      meetingActionIcon = Icons.stop_circle_outlined;
+      meetingActionTap = _handleStartMeeting;
+    } else if (_isMeetingStarted || _meetStatus == 1) {
+      meetingActionText = '结束';
+      meetingActionIcon = Icons.power_settings_new;
+      meetingActionTap = _handleEndMeeting;
+    } else {
+      meetingActionText = '开始';
+      meetingActionIcon = Icons.play_arrow;
+      meetingActionTap = _handleStartMeeting;
+    }
+
     return Container(
       height: 230, // 适当的高度，容纳两行按钮
       child: Column(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          // 第一行：开始/结束、比业务流程、退出
+          // 第一行：开始/结束、业务流程、数据上报
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               // 根据会议状态显示"开始"或"结束"按钮
               _buildFunctionButton(
-                _isMeetingStarted ? '结束' : '开始',
-                _isMeetingStarted ? Icons.power_settings_new : Icons.play_arrow,
+                meetingActionText,
+                meetingActionIcon,
                 color: Colors.white,
-                onTap: _isMeetingStarted ? _handleEndMeeting : _handleStartMeeting,
+                onTap: meetingActionTap,
               ),
               _buildFunctionButton(
                 '业务流程',
@@ -2608,27 +2714,17 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                 onTap: _showStepProgressDialog,
               ),
               _buildFunctionButton(
-                '退出',
-                Icons.exit_to_app,
-                color: Colors.white,
-                onTap: () async {
-                  if (!await showExitConfirmDialog(context)) return;
-                  await LocalExitApi.callExit();
-                  exit(0);
-                },
-              ),
-            ],
-          ),
-          // 第二行：数据上报、数据检查、文件选取
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _buildFunctionButton(
                 '数据上报',
                 Icons.cloud_upload,
                 color: Colors.white,
                 onTap: _handleDataReport,
               ),
+            ],
+          ),
+          // 第二行：数据检查、文件选取、退出（右下角）
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
               _buildFunctionButton(
                 '数据检查',
                 Icons.search,
@@ -2640,6 +2736,16 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                 Icons.folder,
                 color: Colors.white,
                 onTap: _handleFilePick,
+              ),
+              _buildFunctionButton(
+                '退出',
+                Icons.exit_to_app,
+                color: Colors.white,
+                onTap: () async {
+                  if (!await showExitConfirmDialog(context)) return;
+                  await LocalExitApi.callExit();
+                  exit(0);
+                },
               ),
             ],
           ),
@@ -2997,8 +3103,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     Color? color,
     VoidCallback? onTap,
   }) {
-    // 根据文字长度调整字体大小
-    double fontSize = title.length >= 4 ? 20 : 24;
+    // 统一按钮字号，避免“开始/退出”明显偏大
+    const double fontSize = 20;
     final isDisabled = _isLoading || onTap == null;
 
     return SizedBox(
@@ -3055,68 +3161,84 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     });
 
     try {
-      if (_displayManagementType == '标语') {
-        final result = await SccClientWrapper.querySlogan();
-        debugPrint(
-          '[DisplayManagement] querySlogan result: success=${result.isSuccess}, msg=${result.msg}, data=${result.data}',
-        );
-        if (!result.isSuccess) {
-          _showMessage(result.msg, isError: true);
-          setState(() {
-            _sloganTableData = [];
-            _sloganPreviewedRowIndices.clear();
-          });
-          return;
-        }
-
-        final data = result.data;
-        List<dynamic> list = [];
-        if (data is List) {
-          list = data;
-        } else if (data is Map) {
-          final maybe = data['data'] ?? data['list'] ?? data['items'];
-          if (maybe is List) {
-            list = maybe;
-          }
-        }
-        if (list.isNotEmpty) {
-          debugPrint('[DisplayManagement] querySlogan first item: ${list.first}');
-        } else {
-          debugPrint('[DisplayManagement] querySlogan list is empty');
-        }
-
-        // vue 里会给每条 tem.state = true，这里同样做一次增强字段，供后续扩展使用
-        // 同时保留“要发送的 value”给后面的“确认显示”操作。
-        final normalized = list.map((e) {
-          if (e is Map<String, dynamic>) {
-            return {
-              ...e,
-              'state': true,
-              'rowValue': e,
-            };
-          }
-          return {
-            'value': e,
-            'rowValue': e,
-            'state': true,
-          };
-        }).toList();
-
-        setState(() {
-          _sloganTableData = normalized;
-          _sloganPreviewedRowIndices.clear();
-        });
-      } else {
-        // 目前仅实现“标语”查询展示；会标/报到情况保持空状态
+      final result = await SccClientWrapper.querySlogan();
+      _logSloganApi(
+        'querySlogan result: success=${result.isSuccess}, msg=${result.msg}, data=${result.data}',
+      );
+      if (!result.isSuccess) {
+        _showMessage(result.msg, isError: true);
         setState(() {
           _sloganTableData = [];
+          _sloganBannerItems = [];
+          _sloganCheckInItems = [];
+          _showSloganTable = false;
+          _pendingQuickDisplayItem = null;
+          _pendingQuickDisplayType = '';
           _sloganPreviewedRowIndices.clear();
         });
+        return;
       }
+
+      final data = result.data;
+      List<dynamic> list = [];
+      if (data is List) {
+        list = data;
+      } else if (data is Map) {
+        final maybe = data['data'] ?? data['list'] ?? data['items'];
+        if (maybe is List) {
+          list = maybe;
+        }
+      }
+      if (list.isNotEmpty) {
+        _logSloganApi('querySlogan first item: ${list.first}');
+      } else {
+        _logSloganApi('querySlogan list is empty');
+      }
+
+      final normalized = list.map((e) {
+        if (e is Map<String, dynamic>) {
+          return {
+            ...e,
+            'state': true,
+            'rowValue': e,
+          };
+        }
+        return {
+          'value': e,
+          'rowValue': e,
+          'state': true,
+        };
+      }).toList();
+
+      final bannerItems = <dynamic>[];
+      final checkInItems = <dynamic>[];
+      final sloganItems = <dynamic>[];
+      for (final item in normalized) {
+        final sloganName = _extractSloganName(item);
+        if (sloganName == '会标') {
+          bannerItems.add(item);
+        } else if (sloganName == '报到情况') {
+          checkInItems.add(item);
+        } else {
+          sloganItems.add(item);
+        }
+      }
+
+      setState(() {
+        _sloganBannerItems = bannerItems;
+        _sloganCheckInItems = checkInItems;
+        _sloganTableData = sloganItems;
+        _showSloganTable = false;
+        _pendingQuickDisplayItem = null;
+        _pendingQuickDisplayType = '';
+        _sloganPreviewedRowIndices.clear();
+      });
     } catch (e) {
       _showMessage('标语查询失败: $e', isError: true);
       setState(() {
         _sloganTableData = [];
+        _pendingQuickDisplayItem = null;
+        _pendingQuickDisplayType = '';
         _sloganPreviewedRowIndices.clear();
       });
     } finally {
@@ -3143,12 +3265,94 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return item.toString();
   }
 
+  String _extractSloganName(dynamic item) {
+    if (item is Map) {
+      final map = item.cast<String, dynamic>();
+      return (map['SloganName'] ?? map['sloganName'] ?? map['name'] ?? '')
+          .toString()
+          .trim();
+    }
+    return '';
+  }
+
   dynamic _extractSloganRowValue(dynamic item) {
     if (item is Map<String, dynamic>) {
       if (item['rowValue'] != null) return item['rowValue'];
       if (item['value'] != null) return item['value'];
     }
     return item;
+  }
+
+  Widget _buildDisplayTypeButton({
+    required String label,
+    required bool enabled,
+    required bool selected,
+    required VoidCallback? onTap,
+  }) {
+    return Expanded(
+      child: SizedBox(
+        height: 34,
+        child: ElevatedButton(
+          onPressed: enabled ? onTap : null,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: selected ? HexColor('#A30014') : Colors.red[400],
+            foregroundColor: Colors.white,
+            disabledBackgroundColor: Colors.grey[300],
+            disabledForegroundColor: Colors.grey[500],
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(4),
+            ),
+          ),
+          child: Text(
+            label,
+            style: const TextStyle(
+              fontSize: 14,
+              fontFamily: 'Microsoft YaHei',
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _previewQuickDisplayType({
+    required dynamic item,
+    required String type,
+  }) async {
+    if (_isDisplayLoading) return;
+    await _previewSlogan(item, -1);
+    if (!mounted) return;
+    setState(() {
+      _pendingQuickDisplayItem = item;
+      _pendingQuickDisplayType = type;
+    });
+  }
+
+  Future<void> _confirmQuickDisplayType() async {
+    if (_isSendingSlogan || _pendingQuickDisplayItem == null) return;
+    if (!_sloganPreviewedRowIndices.contains(-1)) return;
+    final value = _extractSloganRowValue(_pendingQuickDisplayItem);
+    final jsonData = JsonEncoder().convert(value);
+    setState(() {
+      _isSendingSlogan = true;
+    });
+    try {
+      final result = await SccClientWrapper.sendSlogan(data: jsonData);
+      if (result.isSuccess && result.data == true) {
+        _showMessage('发送成功');
+      } else {
+        _showMessage(result.msg.isNotEmpty ? result.msg : '发送失败', isError: true);
+      }
+    } catch (e) {
+      _showMessage('发送失败: $e', isError: true);
+    } finally {
+      if (!mounted) return;
+      setState(() {
+        _isSendingSlogan = false;
+      });
+    }
   }
 
   Future<void> _previewSlogan(dynamic item, int rowIndex) async {
@@ -3239,7 +3443,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     // content 可能为 Content / content / html 等大小写不同的字段
     dynamic c = map['content'] ?? map['Content'] ?? map['html'] ?? map['HTML'];
     final extracted = _normalizeHtmlValue(c);
-    if (extracted.isNotEmpty) return _decodeHtmlEntitiesIfNeeded(extracted);
+    if (extracted.isNotEmpty) {
+      final decoded = _decodeHtmlEntitiesIfNeeded(extracted);
+      return _normalizeSloganFontFamily(decoded);
+    }
 
     // 有些后端可能把整段对象放在 data/content 字段里为 JSON 字符串
     final dataCandidate = map['data'] ?? map['value'];
@@ -3251,7 +3458,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           if (decoded is Map) {
             final inner = _normalizeHtmlValue(decoded['content']);
             if (inner.isNotEmpty) {
-              return _decodeHtmlEntitiesIfNeeded(inner);
+              final decoded = _decodeHtmlEntitiesIfNeeded(inner);
+              return _normalizeSloganFontFamily(decoded);
             }
           }
         } catch (_) {
@@ -3315,6 +3523,32 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         .replaceAll('&#39;', "'")
         .replaceAll('&apos;', "'")
         .replaceAll('&amp;', '&');
+  }
+
+  String _normalizeSloganFontFamily(String html) {
+    if (html.isEmpty) return html;
+    var result = html;
+    const aliases = <String>[
+      '⽅正⼩标宋_GBK',
+      '方正小标宋_GBK',
+      '方正小标宋',
+      'FZ XiaoBiaoSong GBK',
+      'FZXiaoBiaoSong_GBK',
+    ];
+    for (final alias in aliases) {
+      result = result.replaceAll(alias, 'FZXBYS');
+    }
+    // 容错：把 face 属性里剩余的“小标宋”写法统一映射
+    result = result.replaceAllMapped(
+      RegExp("face\\s*=\\s*[\"']([^\"']*小标宋[^\"']*)[\"']", caseSensitive: false),
+      (_) => 'face="FZXBYS"',
+    );
+    // 容错：style 内 font-family 的“小标宋”写法统一映射
+    result = result.replaceAllMapped(
+      RegExp("font-family\\s*:\\s*([^;\"]*小标宋[^;\"]*)", caseSensitive: false),
+      (_) => 'font-family:FZXBYS',
+    );
+    return result;
   }
 
   Future<void> _confirmDisplaySlogan(dynamic item, int rowIndex) async {
@@ -3596,6 +3830,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                                     _notificationText = '';
                                                     _isSloganPreviewVisible = false;
                                                     _sloganPreviewText = '';
+                                                    _showSloganTable = false;
+                                                    _pendingQuickDisplayItem = null;
+                                                    _pendingQuickDisplayType = '';
                                                   });
                                                 },
                                                 child: Container(
@@ -3646,11 +3883,13 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                             // 显示管理标签（可点击）
                                             Expanded(
                                               child: GestureDetector(
-                                                onTap: () => setState(
-                                                  () =>
-                                                      _isMeetingManagementSelected =
-                                                          false,
-                                                ),
+                                                onTap: () {
+                                                  setState(() {
+                                                    _isMeetingManagementSelected =
+                                                        false;
+                                                  });
+                                                  _loadDisplayManagementData();
+                                                },
                                                 child: Container(
                                                   decoration: BoxDecoration(
                                                     border: Border(
@@ -3777,18 +4016,19 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                                             CrossAxisAlignment
                                                                 .stretch,
                                                         children: [
-                                                          if (_notificationText
-                                                              .trim()
-                                                              .isNotEmpty)
-                                                            MixedFontText(
-                                                              _notificationText,
-                                                              style:
-                                                                  const TextStyle(
-                                                                fontSize: 14,
-                                                                fontFamily:
-                                                                    'Microsoft YaHei',
-                                                              ),
+                                                          MixedFontText(
+                                                            _notificationText
+                                                                    .trim()
+                                                                    .isNotEmpty
+                                                                ? _notificationText
+                                                                : _defaultMeetingStatusText,
+                                                            style:
+                                                                const TextStyle(
+                                                              fontSize: 14,
+                                                              fontFamily:
+                                                                  'Microsoft YaHei',
                                                             ),
+                                                          ),
                                                           if (_isSloganPreviewVisible)
                                                             Padding(
                                                               padding:

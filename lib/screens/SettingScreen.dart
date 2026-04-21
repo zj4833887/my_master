@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
+import 'dart:math' as math;
 import './MeetingDetailScreen.dart';
 import '../scc/scc_client.dart';
 import '../widgets/mixed_font_text.dart';
@@ -111,6 +112,13 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
     super.dispose();
   }
 
+  int _nonNegativeInt(dynamic value) {
+    if (value == null) return 0;
+    if (value is int) return value < 0 ? 0 : value;
+    final parsed = int.tryParse(value.toString()) ?? 0;
+    return parsed < 0 ? 0 : parsed;
+  }
+
   void _updateTime() {
     setState(() {
       _currentTime = DateFormat('yyyy年MM月dd日 HH:mm:ss').format(DateTime.now());
@@ -147,7 +155,7 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
         setState(() {
           _meetingList = allMeetings.map((item) => MeetingData.fromJson(item)).toList();
         });
-        print('解析后的会议列表数量: ${_meetingList.length}');
+        
         // 构建树形结构
         _buildMeetingTree();
       }
@@ -269,7 +277,7 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
       // 如果有 MeetID，设置 set=true 并加载会议信息
       if (data.MeetID != null && data.MeetID!.isNotEmpty) {
         _isPreparing = true;
-        print('270选择会议: ${data.MeetID}');
+        
         _loadMeetingInfo(data.MeetID!);
       } else {
         _isPreparing = false;
@@ -291,33 +299,34 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
     try {
       // 使用 gRPC 调用
       final result = await SccClientWrapper.queryMeetInfo(meetID);
-      print('292加载会议信息: ${result.data}');
+      
       if (result.isSuccess && result.data != null) {
         final num = result.data!;
         setState(() {
-          final notyet = (num['Personnum'] ?? 0) - (num['Personattendancenum'] ?? 0);
-          final shouldarrive = num['Personnum'] ?? 0;
-          final leave = num['Personleavenum'] ?? 0;
+          final shouldarrive = _nonNegativeInt(num['Personnum'] ?? 0);
+          final attend = _nonNegativeInt(num['Personattendancenum'] ?? 0);
+          final leave = _nonNegativeInt(num['Personleavenum'] ?? 0);
+          final notyet = math.max(0, shouldarrive - attend);
           
           _attendanceData['出席情况'] = {
             '应到': shouldarrive,
-            '实到': num['Personattendancenum'] ?? 0,
+            '实到': attend,
             '未到': notyet,
             '请假': leave,
-            '实缺': notyet,
+            '实缺': math.max(0, notyet - leave),
           };
 
-          final specialNum = num['Specialnum'] ?? 0;
-          final specialAttend = num['Specialnattendancenum'] ?? 0;
-          final specialLeave = num['Specialleavenum'] ?? 0;
-          final specialNotyet = specialNum - specialAttend;
+          final specialNum = _nonNegativeInt(num['Specialnum'] ?? 0);
+          final specialAttend = _nonNegativeInt(num['Specialnattendancenum'] ?? 0);
+          final specialLeave = _nonNegativeInt(num['Specialleavenum'] ?? 0);
+          final specialNotyet = math.max(0, specialNum - specialAttend);
 
           _attendanceData['列席情况'] = {
             '应到': specialNum,
             '实到': specialAttend,
             '未到': specialNotyet,
             '请假': specialLeave,
-            '实缺': specialNotyet,
+            '实缺': math.max(0, specialNotyet - specialLeave),
           };
         });
       }
