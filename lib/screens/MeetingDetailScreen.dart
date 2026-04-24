@@ -153,6 +153,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   String _sloganPreviewTemplate = '';
   String _sloganPreviewResolvedHtml = '';
   bool _sloganPreviewFreeze = false;
+  Widget? _frozenSloganPreviewWidget;
+  final ScrollController _sloganTableScrollController = ScrollController();
   Timer? _sloganPreviewTimer;
   Color _sloganPreviewBackground = Colors.white;
 
@@ -188,6 +190,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     _tabController.dispose();
     _routeMapNotifier.dispose();
     _selectedFacilityIdNotifier.dispose();
+    _sloganTableScrollController.dispose();
     _metricsSubscription?.cancel();
     _dataCheckTimer?.cancel();
     _usbAutoImportTimer?.cancel();
@@ -981,6 +984,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     final name = device['name']?.toString() ?? ip;
     final processType = device['ProcessType']?.toString() ?? '';
 
+    if (_isSloganPreviewVisible && _sloganPreviewFreeze) {
+      return;
+    }
     setState(() {
       _notificationText = '正在获取设备信息...';
     });
@@ -2692,8 +2698,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                   ),
                                 )
                               : Scrollbar(
+                                  controller: _sloganTableScrollController,
                                   thumbVisibility: true,
                                   child: SingleChildScrollView(
+                                    controller: _sloganTableScrollController,
                                     child: Column(
                                       children: _sloganTableData
                                           .asMap()
@@ -3435,6 +3443,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
     final freeze = _shouldFreezeSloganPreview(template);
     final resolved = template.isNotEmpty ? _resolveSloganTemplate(template) : _sloganPreviewText;
+    final frozenImageSrc = _extractFrozenPreviewImageSrc(resolved);
 
     if (!mounted) return;
     setState(() {
@@ -3444,19 +3453,17 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       // 兼容：如果模板为空，仍然显示解析出的静态文本
       _sloganPreviewText = template.isNotEmpty ? '' : _sloganPreviewText;
       _sloganPreviewResolvedHtml = resolved;
+      _frozenSloganPreviewWidget = (freeze && frozenImageSrc != null)
+          ? _buildFrozenImageWidget(frozenImageSrc, resolved)
+          : null;
     });
   }
 
   bool _shouldFreezeSloganPreview(String template) {
     final t = template.toLowerCase();
     final hasImg = t.contains('<img') || t.contains('background-image') || t.contains('data:image');
-    final hasPlaceholders = template.contains('{0}') ||
-        template.contains('{1}') ||
-        template.contains('{2}') ||
-        template.contains('{3}') ||
-        template.contains('{4}');
-    // “照片/图片类标语”且不含动态占位符：冻结，避免 WS 刷新导致上下抖动/重排
-    return hasImg && !hasPlaceholders;
+    // 只要是图片类标语，一律冻结，不参与后续 WS 数据驱动的模板更新。
+    return hasImg;
   }
 
   String _resolveSloganTemplate(String template) {
@@ -3508,11 +3515,22 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return src.isEmpty ? null : src;
   }
 
-  Widget _buildSloganPreviewContent(String data) {
-    final imageSrc = _extractSingleImageSrc(data);
-    if (_sloganPreviewFreeze && imageSrc != null) {
-      // 照片类标语走固定尺寸 Image，避免 Html 图片首次/周期性重排抖动。
-      return SizedBox.expand(
+  String? _extractBackgroundImageSrc(String html) {
+    final match = RegExp(
+      'background(?:-image)?\\s*:\\s*url\\((["\\\']?)([^"\\\')]+)\\1\\)',
+      caseSensitive: false,
+    ).firstMatch(html);
+    final src = match?.group(2)?.trim() ?? '';
+    return src.isEmpty ? null : src;
+  }
+
+  String? _extractFrozenPreviewImageSrc(String html) {
+    return _extractSingleImageSrc(html) ?? _extractBackgroundImageSrc(html);
+  }
+
+  Widget _buildFrozenImageWidget(String imageSrc, String fallbackData) {
+    return RepaintBoundary(
+      child: SizedBox.expand(
         child: Image.network(
           imageSrc,
           fit: BoxFit.contain,
@@ -3520,7 +3538,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           gaplessPlayback: true,
           errorBuilder: (_, __, ___) {
             return Html(
-              data: data,
+              data: fallbackData,
               style: {
                 'html': Style(
                   margin: Margins.zero,
@@ -3539,7 +3557,15 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
             );
           },
         ),
-      );
+      ),
+    );
+  }
+
+  Widget _buildSloganPreviewContent(String data) {
+    final imageSrc = _extractFrozenPreviewImageSrc(data);
+    if (_sloganPreviewFreeze && imageSrc != null) {
+      _frozenSloganPreviewWidget ??= _buildFrozenImageWidget(imageSrc, data);
+      return _frozenSloganPreviewWidget!;
     }
 
     return Html(
@@ -3960,6 +3986,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                                     _notificationText = '';
                                                     _isSloganPreviewVisible = false;
                                                     _sloganPreviewText = '';
+                                                    _frozenSloganPreviewWidget = null;
                                                     _showSloganTable = false;
                                                     _pendingQuickDisplayItem = null;
                                                     _pendingQuickDisplayType = '';
@@ -4106,9 +4133,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                               ),
                                               padding: const EdgeInsets.all(8),
                                               child: (_isSloganPreviewVisible &&
-                                                      _notificationText
-                                                          .trim()
-                                                          .isEmpty)
+                                                      (_sloganPreviewFreeze ||
+                                                          _notificationText
+                                                              .trim()
+                                                              .isEmpty))
                                                   // 仅预览时：直接贴顶显示，不走滚动容器，避免出现空白
                                                   ? Builder(
                                                       builder: (context) {
