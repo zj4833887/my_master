@@ -3499,6 +3499,69 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     _sloganPreviewResolvedHtml = next;
   }
 
+  String? _extractSingleImageSrc(String html) {
+    final match = RegExp(
+      '<img[^>]*src\\s*=\\s*["\\\']([^"\\\']+)["\\\']',
+      caseSensitive: false,
+    ).firstMatch(html);
+    final src = match?.group(1)?.trim() ?? '';
+    return src.isEmpty ? null : src;
+  }
+
+  Widget _buildSloganPreviewContent(String data) {
+    final imageSrc = _extractSingleImageSrc(data);
+    if (_sloganPreviewFreeze && imageSrc != null) {
+      // 照片类标语走固定尺寸 Image，避免 Html 图片首次/周期性重排抖动。
+      return SizedBox.expand(
+        child: Image.network(
+          imageSrc,
+          fit: BoxFit.contain,
+          alignment: Alignment.topCenter,
+          gaplessPlayback: true,
+          errorBuilder: (_, __, ___) {
+            return Html(
+              data: data,
+              style: {
+                'html': Style(
+                  margin: Margins.zero,
+                  padding: HtmlPaddings.zero,
+                ),
+                'body': Style(
+                  margin: Margins.zero,
+                  padding: HtmlPaddings.zero,
+                ),
+                'img': Style(
+                  margin: Margins.zero,
+                  padding: HtmlPaddings.zero,
+                  display: Display.block,
+                ),
+              },
+            );
+          },
+        ),
+      );
+    }
+
+    return Html(
+      data: data,
+      style: {
+        'html': Style(
+          margin: Margins.zero,
+          padding: HtmlPaddings.zero,
+        ),
+        'body': Style(
+          margin: Margins.zero,
+          padding: HtmlPaddings.zero,
+        ),
+        'img': Style(
+          margin: Margins.zero,
+          padding: HtmlPaddings.zero,
+          display: Display.block,
+        ),
+      },
+    );
+  }
+
   String _extractSloganHtmlOnlyContent(dynamic item) {
     if (item == null) return '';
     if (item is! Map) return '';
@@ -4076,23 +4139,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                                           padding:
                                                               const EdgeInsets
                                                                   .all(8),
-                                                          child: Html(
-                                                            data: data,
-                                                            style: {
-                                                              'html': Style(
-                                                                margin: Margins.zero,
-                                                                padding: HtmlPaddings.zero,
-                                                              ),
-                                                              'body': Style(
-                                                                margin: Margins.zero,
-                                                                padding: HtmlPaddings.zero,
-                                                              ),
-                                                              'img': Style(
-                                                                margin: Margins.zero,
-                                                                padding: HtmlPaddings.zero,
-                                                                display: Display.block,
-                                                              ),
-                                                            },
+                                                          child:
+                                                              _buildSloganPreviewContent(
+                                                            data,
                                                           ),
                                                         ),
                                                       ),
@@ -4158,23 +4207,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                                                     ),
                                                                     padding: const EdgeInsets
                                                                         .all(8),
-                                                                    child: Html(
-                                                                      data: data,
-                                                                      style: {
-                                                                        'html': Style(
-                                                                          margin: Margins.zero,
-                                                                          padding: HtmlPaddings.zero,
-                                                                        ),
-                                                                        'body': Style(
-                                                                          margin: Margins.zero,
-                                                                          padding: HtmlPaddings.zero,
-                                                                        ),
-                                                                        'img': Style(
-                                                                          margin: Margins.zero,
-                                                                          padding: HtmlPaddings.zero,
-                                                                          display: Display.block,
-                                                                        ),
-                                                                      },
+                                                                    child:
+                                                                        _buildSloganPreviewContent(
+                                                                      data,
                                                                     ),
                                                                   ),
                                                                 ),
