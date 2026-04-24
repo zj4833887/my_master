@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'app_log.dart';
 
 class LocalExitApi {
   LocalExitApi._();
@@ -15,28 +15,28 @@ class LocalExitApi {
   /// - 这里使用短超时，且异常会被吞掉，避免影响用户关闭程序的体验。
   static Future<void> callExit({Duration timeout = const Duration(seconds: 2)}) async {
     if (_called) {
-      debugPrint('LocalExitApi: already called, skip.');
+      AppLog.d('already called, skip.', tag: 'LocalExitApi');
       return;
     }
     _called = true;
 
     try {
       final uri = Uri.parse(_url);
-      debugPrint('LocalExitApi: calling $_url (POST)');
+      AppLog.d('calling $_url (POST)', tag: 'LocalExitApi');
 
       final client = HttpClient();
       try {
         final request = await client.postUrl(uri);
         // 后端如果要求 JSON/body，可以在这里补充；当前退出只需要通知。
         final response = await request.close().timeout(timeout);
-        debugPrint('LocalExitApi: response status=${response.statusCode}');
+        AppLog.d('response status=${response.statusCode}', tag: 'LocalExitApi');
         await response.drain().timeout(timeout);
       } finally {
         client.close(force: true);
       }
     } catch (_) {
       // 忽略所有异常：退出动作优先级更高。
-      debugPrint('LocalExitApi: call failed.');
+      AppLog.d('call failed.', tag: 'LocalExitApi');
     }
   }
 

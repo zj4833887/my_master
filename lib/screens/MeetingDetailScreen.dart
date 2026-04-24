@@ -5,6 +5,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter_html/flutter_html.dart';
+import '../utils/app_log.dart';
 import '../scc/scc_client.dart';
 import '../scc/board.dart';
 import '../widgets/device_map_widget.dart';
@@ -58,7 +59,7 @@ class MeetingDetailScreen extends StatefulWidget {
 class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     with SingleTickerProviderStateMixin {
   void _logSloganApi(String message) {
-    debugPrint('[SloganAPI] $message');
+    AppLog.d(message, tag: 'SloganAPI');
   }
 
   late TabController _tabController;
@@ -149,6 +150,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   bool _isSendingSlogan = false;
   bool _isSloganPreviewVisible = false;
   String _sloganPreviewText = '';
+  String _sloganPreviewTemplate = '';
+  String _sloganPreviewResolvedHtml = '';
+  bool _sloganPreviewFreeze = false;
   Timer? _sloganPreviewTimer;
   Color _sloganPreviewBackground = Colors.white;
 
@@ -228,7 +232,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       return;
     }
     _lastUsbAutoImportError = message;
-    debugPrint('[USB Auto Import] $message');
+    AppLog.d(message, tag: 'USB Auto Import');
     if (mounted) {
       _showMessage(message, isError: true);
     }
@@ -581,7 +585,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         } else if (looksLikeDeviceRoute) {
           // 仅当 channel 确认是 DeviceRouteMap 时更新底图，其他推送不触发刷新
           if (channel == 'DeviceRouteMap') {
-            debugPrint('[DeviceRouteMap] received at ${DateTime.now().toIso8601String()}');
+            AppLog.d(
+              'received at ${DateTime.now().toIso8601String()}',
+              tag: 'DeviceRouteMap',
+            );
             _logPayloadKeysBrief('DeviceRouteMap', channel, remark, data);
             _handleDeviceRouteData(data);
           } else {
@@ -714,6 +721,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
         // 其他接口日志已关闭，仅保留标语接口日志
       }
+
+      // 动态模板预览：仅在模板内容确实变化时更新，图片类标语会被冻结不更新
+      _updateSloganPreviewIfNeeded();
     });
   }
 
@@ -1625,12 +1635,17 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       }
       _showMessage(importResult.msg.isNotEmpty ? importResult.msg : '文件导入失败',
           isError: true);
-      debugPrint(
-          '[USB Auto Import] importRecord failed for $filePath: ${importResult.msg}');
+      AppLog.d(
+        'importRecord failed for $filePath: ${importResult.msg}',
+        tag: 'USB Auto Import',
+      );
       return false;
     } catch (e) {
       _showMessage('导入失败: $e', isError: true);
-      debugPrint('[USB Auto Import] importRecord exception for $filePath: $e');
+      AppLog.d(
+        'importRecord exception for $filePath: $e',
+        tag: 'USB Auto Import',
+      );
       return false;
     } finally {
       _isFileImporting = false;
@@ -1639,7 +1654,6 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   // 显示消息
   void _showMessage(String message, {bool isError = false}) {
-    print('显示消息: $context');
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
@@ -1750,19 +1764,21 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       final currentRouteMap = _routeMapNotifier.value;
       if (currentRouteMap != null &&
           _isSameRouteMap(routeMap, currentRouteMap)) {
-        debugPrint('[DeviceRouteMap] skip refresh: identical to current');
+        AppLog.d('skip refresh: identical to current', tag: 'DeviceRouteMap');
         return;
       }
 
       // 计算签名，仅包含影响渲染的关键信息，避免相同数据反复刷新
       final newSig = _computeRouteMapSignature(routeMap);
       if (newSig != null && newSig == _lastRouteMapSignature) {
-        debugPrint('[DeviceRouteMap] skip refresh: same signature');
+        AppLog.d('skip refresh: same signature', tag: 'DeviceRouteMap');
         return;
       }
 
-      print(
-          '[DeviceRouteMap] parsed routeId=${routeMap.routeId} meetId=${routeMap.meetId} facilities=${routeMap.settings.facilities.length}');
+      AppLog.d(
+        'parsed routeId=${routeMap.routeId} meetId=${routeMap.meetId} facilities=${routeMap.settings.facilities.length}',
+        tag: 'DeviceRouteMap',
+      );
       _routeMapNotifier.value = routeMap;
       _lastRouteMapSignature = newSig;
     } catch (e) {
@@ -1783,8 +1799,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       if (nested is Map) {
         nestedKeys = nested.keys.join(', ');
       }
-      debugPrint(
-        '[$tag] channel=$channel remark=$remark keys=[$topKeys] data.keys=[$nestedKeys]',
+      AppLog.d(
+        'channel=$channel remark=$remark keys=[$topKeys] data.keys=[$nestedKeys]',
+        tag: tag,
       );
     } catch (_) {
       // ignore
@@ -1793,17 +1810,18 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   void _debugPrintPayloadKeys(Map<String, dynamic> payload) {
     try {
-      debugPrint('[DeviceRouteMap] payload keys: ${payload.keys.join(', ')}');
+      AppLog.d('payload keys: ${payload.keys.join(', ')}', tag: 'DeviceRouteMap');
       final settingsList = payload['RouteMapSettings'];
       if (settingsList is List && settingsList.isNotEmpty && settingsList.first is Map) {
         final first = settingsList.first as Map;
-        debugPrint(
-          '[DeviceRouteMap] RouteMapSettings[0] keys: ${(first.keys).join(', ')}',
+        AppLog.d(
+          'RouteMapSettings[0] keys: ${(first.keys).join(', ')}',
+          tag: 'DeviceRouteMap',
         );
       }
       final nestedData = payload['data'];
       if (nestedData is Map) {
-        debugPrint('[DeviceRouteMap] data keys: ${nestedData.keys.join(', ')}');
+        AppLog.d('data keys: ${nestedData.keys.join(', ')}', tag: 'DeviceRouteMap');
       }
     } catch (_) {
       // 忽略调试打印异常
@@ -1849,37 +1867,40 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   bool _isSameRouteMap(FacilityRouteMap a, FacilityRouteMap b) {
     try {
       if (a.routeId != b.routeId) {
-        debugPrint('[DeviceRouteMap] diff: routeId');
+        AppLog.d('diff: routeId', tag: 'DeviceRouteMap');
         return false;
       }
       if (a.settings.bgPath.trim() != b.settings.bgPath.trim()) {
-        debugPrint('[DeviceRouteMap] diff: bgPath');
+        AppLog.d('diff: bgPath', tag: 'DeviceRouteMap');
         return false;
       }
       if ((a.settings.bgBytes?.length ?? 0) !=
           (b.settings.bgBytes?.length ?? 0)) {
-        debugPrint('[DeviceRouteMap] diff: bgBytes len');
+        AppLog.d('diff: bgBytes len', tag: 'DeviceRouteMap');
         return false;
       }
       if (_round6(a.settings.canvasSize.width) !=
           _round6(b.settings.canvasSize.width)) {
-        debugPrint('[DeviceRouteMap] diff: canvas width');
+        AppLog.d('diff: canvas width', tag: 'DeviceRouteMap');
         return false;
       }
       if (_round6(a.settings.canvasSize.height) !=
           _round6(b.settings.canvasSize.height)) {
-        debugPrint('[DeviceRouteMap] diff: canvas height');
+        AppLog.d('diff: canvas height', tag: 'DeviceRouteMap');
         return false;
       }
       final facA = _sortedFacilities(a.settings.facilities);
       final facB = _sortedFacilities(b.settings.facilities);
       if (facA.length != facB.length) {
-        debugPrint('[DeviceRouteMap] diff: facilities length');
+        AppLog.d('diff: facilities length', tag: 'DeviceRouteMap');
         return false;
       }
       for (var i = 0; i < facA.length; i++) {
         if (!_shallowMapEquals(facA[i], facB[i])) {
-          debugPrint('[DeviceRouteMap] diff: facility ${facA[i]} vs ${facB[i]}');
+          AppLog.d(
+            'diff: facility ${facA[i]} vs ${facB[i]}',
+            tag: 'DeviceRouteMap',
+          );
           return false;
         }
       }
@@ -2557,12 +2578,32 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                     ),
                   ),
                   const Spacer(),
-                  TextButton(
-                    onPressed:
-                        (_isSendingSlogan || !_sloganPreviewedRowIndices.contains(-1))
-                            ? null
-                            : _confirmQuickDisplayType,
-                    child: const Text('确认发送'),
+                  SizedBox(
+                    height: 34,
+                    child: ElevatedButton(
+                      onPressed: (_isSendingSlogan ||
+                              !_sloganPreviewedRowIndices.contains(-1))
+                          ? null
+                          : _confirmQuickDisplayType,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: HexColor('#A30014'),
+                        foregroundColor: Colors.white,
+                        disabledBackgroundColor: Colors.grey[300],
+                        disabledForegroundColor: Colors.grey[500],
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                      child: const Text(
+                        '确认显示',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontFamily: 'Microsoft YaHei',
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -2601,7 +2642,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                           const Expanded(
                             flex: 3,
                             child: Text(
-                              '内容',
+                              '标语名称',
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
                                 color: Colors.black87,
@@ -3388,9 +3429,41 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       _sloganPreviewedRowIndices.add(rowIndex);
     });
 
+    // 取消旧的定时刷新：频繁 setState 会导致 Html/<img> 反复重建而闪烁
+    _sloganPreviewTimer?.cancel();
+    _sloganPreviewTimer = null;
+
+    final freeze = _shouldFreezeSloganPreview(template);
+    final resolved = template.isNotEmpty ? _resolveSloganTemplate(template) : _sloganPreviewText;
+
+    if (!mounted) return;
+    setState(() {
+      _notificationText = ''; // 不再输出纯文本，避免重复展示
+      _sloganPreviewTemplate = template;
+      _sloganPreviewFreeze = freeze;
+      // 兼容：如果模板为空，仍然显示解析出的静态文本
+      _sloganPreviewText = template.isNotEmpty ? '' : _sloganPreviewText;
+      _sloganPreviewResolvedHtml = resolved;
+    });
+  }
+
+  bool _shouldFreezeSloganPreview(String template) {
+    final t = template.toLowerCase();
+    final hasImg = t.contains('<img') || t.contains('background-image') || t.contains('data:image');
+    final hasPlaceholders = template.contains('{0}') ||
+        template.contains('{1}') ||
+        template.contains('{2}') ||
+        template.contains('{3}') ||
+        template.contains('{4}');
+    // “照片/图片类标语”且不含动态占位符：冻结，避免 WS 刷新导致上下抖动/重排
+    return hasImg && !hasPlaceholders;
+  }
+
+  String _resolveSloganTemplate(String template) {
+    if (template.trim().isEmpty) return '';
+
     // 会议标题拆分 oneLeve/twoLeve（vue: this.title.split("@")）
-    final rawTitle =
-        (_meetingTitle.isNotEmpty ? _meetingTitle : widget.meetingName);
+    final rawTitle = (_meetingTitle.isNotEmpty ? _meetingTitle : widget.meetingName);
     final parts = rawTitle.split('@');
     final oneLeve = parts.isNotEmpty ? parts[0] : '';
     final twoLeve = parts.length > 1 ? parts[1] : '';
@@ -3404,34 +3477,26 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     String padNum(int n) {
       final s = n.toString();
       if (s.length >= width) return s;
-      return '\u2000' * (width - s.length) + s; // 等同 padStart(..., '\u2000')
+      return '\u2000' * (width - s.length) + s;
     }
 
-    String computeHtml() {
-      // {0}=oneLeve, {1}=twoLeve, {2}=shouldarrive, {3}=a, {4}=notyet
-      return template
-          .replaceAll('{0}', oneLeve)
-          .replaceAll('{1}', twoLeve)
-          .replaceAll('{2}', padNum(shouldArrive))
-          .replaceAll('{3}', padNum(a))
-          .replaceAll('{4}', padNum(notYet));
-    }
+    return template
+        .replaceAll('{0}', oneLeve)
+        .replaceAll('{1}', twoLeve)
+        .replaceAll('{2}', padNum(shouldArrive))
+        .replaceAll('{3}', padNum(a))
+        .replaceAll('{4}', padNum(notYet));
+  }
 
-    // 立即刷新一次
-    final first = computeHtml();
-    if (!mounted) return;
-    setState(() {
-      _notificationText = ''; // 不再输出纯文本，避免重复展示
-      _sloganPreviewText = first;
-    });
+  void _updateSloganPreviewIfNeeded() {
+    if (!_isSloganPreviewVisible) return;
+    if (_sloganPreviewFreeze) return;
+    final template = _sloganPreviewTemplate;
+    if (template.trim().isEmpty) return;
 
-    // 每 100ms 刷新一次（等同 setInterval）
-    _sloganPreviewTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
-      if (!mounted) return;
-      setState(() {
-        _sloganPreviewText = computeHtml();
-      });
-    });
+    final next = _resolveSloganTemplate(template);
+    if (next == _sloganPreviewResolvedHtml) return;
+    _sloganPreviewResolvedHtml = next;
   }
 
   String _extractSloganHtmlOnlyContent(dynamic item) {
@@ -3585,7 +3650,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   }
 
   Widget _buildSloganRow(int index, dynamic item) {
+    final name = _extractSloganName(item);
     final content = _extractSloganContent(item);
+    final displayText = name.isNotEmpty ? name : (content.isNotEmpty ? content : '—');
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
       decoration: BoxDecoration(
@@ -3606,7 +3673,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           Expanded(
             flex: 3,
             child: Text(
-              content.isNotEmpty ? content : '—',
+              displayText,
               style: TextStyle(fontFamily: 'Microsoft YaHei', fontSize: 13),
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
@@ -3980,7 +4047,15 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                                           .trim()
                                                           .isEmpty)
                                                   // 仅预览时：直接贴顶显示，不走滚动容器，避免出现空白
-                                                  ? SizedBox(
+                                                  ? Builder(
+                                                      builder: (context) {
+                                                        final sloganHtml =
+                                                            _sloganPreviewResolvedHtml;
+                                                        final data = sloganHtml
+                                                                .isNotEmpty
+                                                            ? sloganHtml
+                                                            : '<div style="text-align:center; color:#A30014; font-weight:bold;">—</div>';
+                                                        return SizedBox(
                                                       width: double.infinity,
                                                       child: AspectRatio(
                                                         aspectRatio: 4 / 3,
@@ -4002,13 +4077,27 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                                               const EdgeInsets
                                                                   .all(8),
                                                           child: Html(
-                                                            data: _sloganPreviewText
-                                                                    .isNotEmpty
-                                                                ? _sloganPreviewText
-                                                                : '<div style="text-align:center; color:#A30014; font-weight:bold;">—</div>',
+                                                            data: data,
+                                                            style: {
+                                                              'html': Style(
+                                                                margin: Margins.zero,
+                                                                padding: HtmlPaddings.zero,
+                                                              ),
+                                                              'body': Style(
+                                                                margin: Margins.zero,
+                                                                padding: HtmlPaddings.zero,
+                                                              ),
+                                                              'img': Style(
+                                                                margin: Margins.zero,
+                                                                padding: HtmlPaddings.zero,
+                                                                display: Display.block,
+                                                              ),
+                                                            },
                                                           ),
                                                         ),
                                                       ),
+                                                    );
+                                                      },
                                                     )
                                                   : SingleChildScrollView(
                                                       child: Column(
@@ -4030,7 +4119,16 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                                             ),
                                                           ),
                                                           if (_isSloganPreviewVisible)
-                                                            Padding(
+                                                            Builder(
+                                                              builder:
+                                                                  (context) {
+                                                                final sloganHtml =
+                                                                    _sloganPreviewResolvedHtml;
+                                                                final data = sloganHtml
+                                                                        .isNotEmpty
+                                                                    ? sloganHtml
+                                                                    : '<div style="text-align:center; color:#A30014; font-weight:bold;">—</div>';
+                                                                return Padding(
                                                               padding:
                                                                   const EdgeInsets
                                                                       .only(
@@ -4060,16 +4158,29 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                                                     ),
                                                                     padding: const EdgeInsets
                                                                         .all(8),
-                                                                    child:
-                                                                        Html(
-                                                                      data: _sloganPreviewText
-                                                                              .isNotEmpty
-                                                                          ? _sloganPreviewText
-                                                                          : '<div style="text-align:center; color:#A30014; font-weight:bold;">—</div>',
+                                                                    child: Html(
+                                                                      data: data,
+                                                                      style: {
+                                                                        'html': Style(
+                                                                          margin: Margins.zero,
+                                                                          padding: HtmlPaddings.zero,
+                                                                        ),
+                                                                        'body': Style(
+                                                                          margin: Margins.zero,
+                                                                          padding: HtmlPaddings.zero,
+                                                                        ),
+                                                                        'img': Style(
+                                                                          margin: Margins.zero,
+                                                                          padding: HtmlPaddings.zero,
+                                                                          display: Display.block,
+                                                                        ),
+                                                                      },
                                                                     ),
                                                                   ),
                                                                 ),
                                                               ),
+                                                            );
+                                                              },
                                                             ),
                                                         ],
                                                       ),

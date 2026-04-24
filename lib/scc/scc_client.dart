@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:developer' as developer;
 import 'scc.dart';
 import 'scc.pb.dart';
 import '../config/scc_config.dart';
 import 'board.dart';
+import '../utils/app_log.dart';
 
 /// API 响应结果封装
 class ApiResult<T> {
@@ -341,7 +341,10 @@ class SccClientWrapper {
       final resp = await instance.client.databaseCheck(greq);
       
       // 记录完整的 gRPC 响应，用于调试
-      developer.log('databaseCheck gRPC Response: code=${resp.code}, msg=${resp.msg}, data=${resp.data}, remark=${resp.remark}');
+      AppLog.d(
+        'databaseCheck gRPC Response: code=${resp.code}, msg=${resp.msg}, data=${resp.data}, remark=${resp.remark}',
+        tag: 'SccClientWrapper',
+      );
       
       // 构建完整的响应信息
       String resultData = '';
@@ -367,7 +370,7 @@ class SccClientWrapper {
         data: resultData.isEmpty ? null : resultData,
       );
     } catch (e) {
-      developer.log('databaseCheck error: $e');
+      AppLog.d('databaseCheck error: $e', tag: 'SccClientWrapper');
       return ApiResult(
         code: -1,
         msg: _normalizeSccError(e),
@@ -525,10 +528,7 @@ class SccClientWrapper {
     try {
       final result =
           await instance.queryProgressDiagram(meetId: meetID);
-      developer.log(
-        '477queryProgressDiagram payload: $result',
-        name: 'SccClientWrapper',
-      );
+      AppLog.d('queryProgressDiagram payload: $result', tag: 'SccClientWrapper');
       final step = _extractProgressStep(result);
       if (step == null) {
         return ApiResult(
