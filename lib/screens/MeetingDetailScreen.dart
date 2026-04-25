@@ -109,6 +109,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   // 设备数据（从客户端列表生成）
   List<Map<String, dynamic>> _devices = [];
 
+  // 调试：打印设备排序（用于定位“乱跳”）
+  static const bool _kLogDeviceOrder = false;
+
   // 数据检查相关
   Timer? _dataCheckTimer;
   List<Map<String, dynamic>> _dataCheckResults = [];
@@ -127,6 +130,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   // 通知信息（右侧卡片）
   String _notificationText = '';
+
+  // 调试：输出 gRPC 推送原始数据（不受 AppLog.enabled 限制）
+  static const bool _kLogGrpcPush = false;
 
   String get _defaultMeetingStatusText {
     switch (_meetStatus) {
@@ -559,6 +565,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       metricBoard: _metricBoard,
       onData: (Map<String, dynamic> data, String channel) {
         final remark = data['remark']?.toString() ?? '';
+        if (_kLogGrpcPush) {
+          _logGrpcPushPayload(channel: channel, remark: remark, data: data);
+        }
         final bool looksLikeMeetInfo = channel == 'WS_MeetInfo' ||
             channel.isEmpty ||
             data.containsKey('Personnum') ||
@@ -875,12 +884,13 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   // 更新设备列表
   void _updateDevicesList() {
-    _devices = _clientList.map((client) {
+    final nextDevices = _clientList.map((client) {
       final processType = client['ProcessType'] ?? 'Server';
       final clientStatus = client['ClientStatus'] ?? 0;
       final ip = client['IP']?.toString() ?? '';
       final facilityId = client['FacilityID'] ?? client['facilityId'];
       final stationName = client['StationName'] ?? '';
+      final order = _parseInt(client['Order'] ?? 0);
       
       // 根据 ProcessType 和 ClientStatus 确定状态
       String status = _getStatusFromClientStatus(clientStatus, processType);
@@ -910,8 +920,41 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         'FacilityID': facilityId,
         'IP': ip,
         'ClientStatus': clientStatus,
+        'Order': order,
       };
     }).toList();
+
+    // 关键：按后端下发的 Order 做主排序，保证设备顺序稳定
+    // 若 Order 相同，再按名称/IP/NodeID 兜底
+    int cmpStr(String a, String b) => a.toLowerCase().compareTo(b.toLowerCase());
+    String nameKey(Map<String, dynamic> d) => (d['name']?.toString() ?? '').trim();
+    String ipKey(Map<String, dynamic> d) => (d['IP']?.toString() ?? '').trim();
+    String nodeKey(Map<String, dynamic> d) => (d['NodeID']?.toString() ?? '').trim();
+    int orderKey(Map<String, dynamic> d) => _parseInt(d['Order'] ?? 0);
+
+    nextDevices.sort((a, b) {
+      final o1 = orderKey(a);
+      final o2 = orderKey(b);
+      if (o1 != o2) return o1.compareTo(o2);
+      final c1 = cmpStr(nameKey(a), nameKey(b));
+      if (c1 != 0) return c1;
+      final c2 = cmpStr(ipKey(a), ipKey(b));
+      if (c2 != 0) return c2;
+      return cmpStr(nodeKey(a), nodeKey(b));
+    });
+
+    if (_kLogDeviceOrder) {
+      final brief = nextDevices.map((d) {
+        final n = nameKey(d);
+        final ip = ipKey(d);
+        final node = nodeKey(d);
+        final st = (d['status']?.toString() ?? '').trim();
+        return '$n|$ip|$node|$st';
+      }).join(' , ');
+      AppLog.d('Attend devices order: $brief', tag: 'AttendDevices');
+    }
+
+    _devices = nextDevices;
   }
 
   // 根据 ClientStatus 获取状态文本
@@ -1827,6 +1870,41 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       );
     } catch (_) {
       // ignore
+    }
+  }
+
+  void _logGrpcPushPayload({
+    required String channel,
+    required String remark,
+    required Map<String, dynamic> data,
+  }) {
+    try {
+      final lowerChannel = channel.toLowerCase();
+      final lowerRemark = remark.toLowerCase();
+      // 关闭图片/点位图通道日志，避免大 payload 刷屏
+      if (lowerChannel == 'deviceroutemap' ||
+          lowerRemark.contains('deviceroute') ||
+          lowerRemark.contains('routemap')) {
+        return;
+      }
+      // 关闭设备全量列表通道日志（WS_Client / WS_ClientChild），避免持续刷屏
+      if (lowerChannel == 'ws_client' ||
+          lowerChannel == 'ws_clientchild' ||
+          lowerRemark.contains('ws_client')) {
+        return;
+      }
+
+      final ch = channel.isEmpty ? '(empty)' : channel;
+      final rm = remark.isEmpty ? '-' : remark;
+      String body;
+      try {
+        body = jsonEncode(data);
+      } catch (_) {
+        body = data.toString();
+      }
+      debugPrint('[gRPC-PUSH] channel=$ch remark=$rm payload=$body');
+    } catch (e) {
+      debugPrint('[gRPC-PUSH] log error: $e');
     }
   }
 

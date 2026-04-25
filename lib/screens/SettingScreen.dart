@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import './MeetingDetailScreen.dart';
 import '../scc/scc_client.dart';
 import '../widgets/mixed_font_text.dart';
+import '../utils/app_log.dart';
 import '../utils/hex_color.dart';
 
 // 会议数据模型
@@ -391,6 +392,20 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
     try {
       // 使用 gRPC 调用继续会议
       final result = await SccClientWrapper.continueMeet(_selectedMeetID!);
+
+      // 输出后端返回，便于核对（你可以在控制台搜 ContinueMeetResp）
+      // 注意：AppLog 默认是关闭的（AppLog.enabled=false），这里用 debugPrint 兜底确保可见
+      // ignore: avoid_print
+      debugPrint(
+        '[ContinueMeet] ContinueMeetResp: meetId=$_selectedMeetID, code=${result.code}, msg=${result.msg}, data=${result.data}',
+      );
+      AppLog.d(
+        'ContinueMeetResp: meetId=$_selectedMeetID, code=${result.code}, msg=${result.msg}, data=${result.data}',
+        tag: 'ContinueMeet',
+      );
+
+      // await 之后必须判断 mounted，避免 “State no longer has a context”
+      if (!mounted) return;
       
       if (result.isSuccess && result.data == true) {
         // 跳转到主页面，传递 MeetId 参数
@@ -409,6 +424,10 @@ class _MeetingCheckInScreenState extends State<MeetingCheckInScreen> {
         );
       }
     } catch (e) {
+      // ignore: avoid_print
+      debugPrint('[ContinueMeet] exception: $e');
+      AppLog.d('ContinueMeet exception: $e', tag: 'ContinueMeet');
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('操作失败: $e')),
       );
