@@ -122,6 +122,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   bool _isLoading = false;
   bool _isFileImporting = false;
 
+  // 会议开始/结束操作序号：用于丢弃过期异步返回，避免提示与状态不一致
+  int _meetingActionSeq = 0;
+
   // 通知信息（右侧卡片）
   String _notificationText = '';
 
@@ -1124,12 +1127,15 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
     if (_isLoading) return;
 
+    final int actionSeq = ++_meetingActionSeq;
+
     setState(() {
       _isLoading = true;
     });
 
     try {
       final result = await SccClientWrapper.startMeet(widget.meetId!);
+      if (!mounted || actionSeq != _meetingActionSeq) return;
       if (result.isSuccess) {
         setState(() {
           _meetStatus = 1;
@@ -1141,8 +1147,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         _showMessage(result.msg.isNotEmpty ? result.msg : '会议开始失败', isError: true);
       }
     } catch (e) {
+      if (!mounted || actionSeq != _meetingActionSeq) return;
       _showMessage('操作失败: $e', isError: true);
     } finally {
+      if (!mounted || actionSeq != _meetingActionSeq) return;
       setState(() {
         _isLoading = false;
       });
@@ -1181,12 +1189,15 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
     if (_isLoading) return;
 
+    final int actionSeq = ++_meetingActionSeq;
+
     setState(() {
       _isLoading = true;
     });
 
     try {
       final result = await SccClientWrapper.endMeet(widget.meetId!);
+      if (!mounted || actionSeq != _meetingActionSeq) return;
       if (result.isSuccess) {
         setState(() {
           _meetStatus = 2;
@@ -1198,8 +1209,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         _showMessage(result.msg.isNotEmpty ? result.msg : '会议结束失败', isError: true);
       }
     } catch (e) {
+      if (!mounted || actionSeq != _meetingActionSeq) return;
       _showMessage('操作失败: $e', isError: true);
     } finally {
+      if (!mounted || actionSeq != _meetingActionSeq) return;
       setState(() {
         _isLoading = false;
       });
@@ -1553,7 +1566,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                             style: TextStyle(
                               fontSize: 22,
                               fontWeight: FontWeight.bold,
-                              color: ok ? Colors.green : Colors.red,
+                              color: ok ? Colors.green : Colors.amber.shade700,
                               fontFamily: 'Microsoft YaHei',
                             ),
                           );
@@ -1660,7 +1673,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   // 显示消息
   void _showMessage(String message, {bool isError = false}) {
-    ScaffoldMessenger.of(context).showSnackBar(
+    final messenger = ScaffoldMessenger.of(context);
+    // 避免多次操作导致 SnackBar 排队，从而出现“状态已结束但提示是开始成功”
+    messenger.clearSnackBars();
+    messenger.showSnackBar(
       SnackBar(
         content: Text(
           message,
@@ -2669,13 +2685,46 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                     fontFamily: 'Microsoft YaHei',
                                   ),
                                 ),
-                                InkWell(
-                                  onTap: () {
-                                    setState(() {
-                                      _showSloganTable = false;
-                                    });
-                                  },
-                                  child: const Icon(Icons.close, size: 18),
+                                Row(
+                                  children: [
+                                    InkWell(
+                                      onTap: _isDisplayLoading
+                                          ? null
+                                          : () async {
+                                              await _loadDisplayManagementData();
+                                              if (!mounted) return;
+                                              setState(() {
+                                                _showSloganTable = true;
+                                              });
+                                            },
+                                      child: Container(
+                                        width: 22,
+                                        height: 22,
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                          borderRadius: BorderRadius.circular(11),
+                                          border: Border.all(color: Colors.grey.shade400),
+                                        ),
+                                        alignment: Alignment.center,
+                                        child: _isDisplayLoading
+                                            ? const SizedBox(
+                                                width: 12,
+                                                height: 12,
+                                                child: CircularProgressIndicator(strokeWidth: 2),
+                                              )
+                                            : const Icon(Icons.refresh, size: 14),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    InkWell(
+                                      onTap: () {
+                                        setState(() {
+                                          _showSloganTable = false;
+                                        });
+                                      },
+                                      child: const Icon(Icons.close, size: 18),
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),
