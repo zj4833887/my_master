@@ -522,6 +522,22 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     }
   }
 
+  /// 按 IP 端口与设施类型推断 ProcessType（与 WS / HTTP 列表一致）。
+  /// 地垫为 **:1030**，需优先于 FacilityTypeName；否则后端未标「报到终端」时会误为 Client（计算机图标）。
+  void _applyProcessTypeForClientList(Map<String, dynamic> client) {
+    final facilityType = client['FacilityTypeName']?.toString() ?? '';
+    final ip = client['IP']?.toString() ?? '';
+    if (ip.contains(':1030') || ip.endsWith('1030')) {
+      client['ProcessType'] = 'didian';
+      return;
+    }
+    if (facilityType == '报到终端') {
+      client['ProcessType'] = 'rack';
+    } else {
+      client['ProcessType'] = 'Client';
+    }
+  }
+
   // 加载客户端列表
   Future<void> _loadClientList() async {
     try {
@@ -537,19 +553,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
               client['disabled'] = false;
             }
             
-            // 根据 FacilityTypeName 与端口设置 ProcessType
-            final facilityType = client['FacilityTypeName']?.toString() ?? '';
-            final ip = client['IP']?.toString() ?? '';
-            if (facilityType == '报到终端') {
-              if (ip.contains(':1030') || ip.endsWith('1030')) {
-                client['ProcessType'] = 'didian';
-              } else {
-                client['ProcessType'] = 'rack';
-              }
-            } else {
-              client['ProcessType'] = 'Client';
-            }
-            
+            _applyProcessTypeForClientList(client);
+
             return client;
           }).toList();
           
@@ -795,18 +800,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         final status = client['ClientStatus'];
         client['disabled'] = (status == 0 || status == 4);
 
-        // 根据 FacilityTypeName 与端口设置 ProcessType（与 _loadClientList 保持一致）
-        final facilityType = client['FacilityTypeName']?.toString() ?? '';
-        final ip = client['IP']?.toString() ?? '';
-        if (facilityType == '报到终端') {
-          if (ip.contains(':1030') || ip.endsWith('1030')) {
-            client['ProcessType'] = 'didian';
-          } else {
-            client['ProcessType'] = 'rack';
-          }
-        } else {
-          client['ProcessType'] = 'Client';
-        }
+        _applyProcessTypeForClientList(client);
 
         return client;
       }).toList();
@@ -1217,33 +1211,13 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         : modeLower == 'backup'
             ? '备机'
             : mode;
-    // hdinfo：你给的示例里包含 hostname/kernel/os/arch/cpu/mem/boot
+    // hdinfo：示例里包含 hostname/kernel/os/arch/cpu/mem 等（不再展示 boot 系统启动时间）
     final hdinfoRaw = dataMap['hdinfo'];
     final hdinfoMap =
         hdinfoRaw is Map ? hdinfoRaw.cast<String, dynamic>() : <String, dynamic>{};
 
     String? _get(String key) =>
         hdinfoMap[key]?.toString() ?? dataMap[key]?.toString();
-
-    // 如果设备是“硬盘/双机”(master/backup)，boot 通常在其子对象内
-    Map<String, dynamic> _asMap(dynamic v) {
-      if (v is Map<String, dynamic>) return v;
-      if (v is Map) return v.cast<String, dynamic>();
-      return const <String, dynamic>{};
-    }
-
-    final masterMap = _asMap(hdinfoMap['master'] ?? hdinfoMap['Master']);
-    final backupMap = _asMap(hdinfoMap['backup'] ?? hdinfoMap['Backup']);
-    final masterBoot = masterMap['boot']?.toString() ??
-        masterMap['Boot']?.toString() ??
-        hdinfoMap['boot']?.toString();
-    final backupBoot = backupMap['boot']?.toString() ??
-        backupMap['Boot']?.toString() ??
-        hdinfoMap['boot']?.toString();
-
-    final isDiskLike = processType.toLowerCase().contains('disk') ||
-        masterMap.isNotEmpty ||
-        backupMap.isNotEmpty;
 
     final buf = StringBuffer();
     buf.writeln('设备: $deviceName');
@@ -1255,13 +1229,6 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     buf.writeln('  架构: ${_get('arch') ?? '-'}');
     buf.writeln('  CPU: ${_get('cpu') ?? ''}');
     buf.writeln('  内存: ${_get('mem') ?? '-'}');
-    if (isDiskLike && (masterMap.isNotEmpty || backupMap.isNotEmpty)) {
-      buf.writeln('  boot 系统启动时间:');
-      buf.writeln('    主机: ${masterBoot ?? '-'}');
-      buf.writeln('    备机: ${backupBoot ?? '-'}');
-    } else {
-      buf.writeln('  boot 系统启动时间: ${_get('boot') ?? '-'}');
-    }
 
     return buf.toString();
   }
