@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:math' as math;
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter_html/flutter_html.dart';
 import '../utils/app_log.dart';
+import '../utils/station_stat_lookup.dart';
 import '../scc/scc_client.dart';
 import '../scc/board.dart';
 import '../widgets/device_map_widget.dart';
@@ -58,10 +60,6 @@ class MeetingDetailScreen extends StatefulWidget {
 
 class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     with SingleTickerProviderStateMixin {
-  void _logSloganApi(String message) {
-    AppLog.d(message, tag: 'SloganAPI');
-  }
-
   late TabController _tabController;
   bool _isMeetingManagementSelected = true;
 
@@ -97,7 +95,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   // 客户端列表
   List<Map<String, dynamic>> _clientList = [];
 
-  // 站点统计：WS_StationNum 返回的每个站点的出席/列席人数（按 Station/IP 索引）
+  // 站点统计：WS_StationNum 的 `Station` 字段为 key；与客户端 IP/站名 的匹配见 [lookupStationStatRow]
   Map<String, Map<String, int>> _stationStats = {};
 
   // MetricBoard 实例
@@ -108,6 +106,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   // 设备数据（从客户端列表生成）
   List<Map<String, dynamic>> _devices = [];
+  Map<String, int> _lastWsClientOrderByDevice = {};
+  static const bool _kLogWsClientOrderDiff = false;
 
   // 调试：打印设备排序（用于定位“乱跳”）
   static const bool _kLogDeviceOrder = false;
@@ -133,6 +133,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   // 调试：输出 gRPC 推送原始数据（不受 AppLog.enabled 限制）
   static const bool _kLogGrpcPush = false;
+
+  /// 调试「出席/列席」人数：改为 true 后在 Debug 控制台输出 WS_StationNum 与匹配结果（使用 dart `developer.log`）
+  static const bool _kLogStationNumAttend = false;
 
   String get _defaultMeetingStatusText {
     switch (_meetStatus) {
@@ -782,6 +785,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     final list = data['data'];
     if (list is! List) return;
 
+    _logWsClientOrderDiffIfChanged(list);
+
     setState(() {
       _clientList = list.map<Map<String, dynamic>>((item) {
         final client = Map<String, dynamic>.from(item as Map);
@@ -813,6 +818,39 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         _updateDataCheckResults();
       }
     });
+  }
+
+  void _logWsClientOrderDiffIfChanged(List<dynamic> list) {
+    if (!_kLogWsClientOrderDiff) {
+      return;
+    }
+    final current = <String, int>{};
+    for (final item in list) {
+      if (item is! Map) continue;
+      final map = Map<String, dynamic>.from(item);
+      final key = (map['IP']?.toString().trim().isNotEmpty ?? false)
+          ? map['IP'].toString().trim()
+          : (map['NodeID']?.toString().trim().isNotEmpty ?? false)
+              ? map['NodeID'].toString().trim()
+              : map['Name']?.toString().trim() ?? '';
+      if (key.isEmpty) continue;
+      current[key] = _parseInt(map['Order'] ?? 0);
+    }
+
+    if (_lastWsClientOrderByDevice.isNotEmpty) {
+      final changed = <String>[];
+      for (final entry in current.entries) {
+        final old = _lastWsClientOrderByDevice[entry.key];
+        if (old != null && old != entry.value) {
+          changed.add('${entry.key}: $old -> ${entry.value}');
+        }
+      }
+      if (changed.isNotEmpty) {
+        AppLog.d('OrderChanged: ${changed.join(' ; ')}', tag: 'WS_Client');
+      }
+    }
+
+    _lastWsClientOrderByDevice = current;
   }
 
   // 更新数据检查结果（从 _clientList 中提取）
@@ -876,6 +914,16 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
     if (stats.isEmpty) return;
 
+    if (_kLogStationNumAttend) {
+      final keys = stats.keys.toList();
+      final sample = list.take(5).map((e) => e.toString()).join(' | ');
+      developer.log(
+        'WS_StationNum entries=${list.length} statKeys=${keys.length} '
+        'keys=${keys.take(12).join(",")}${keys.length > 12 ? "..." : ""} sample=$sample',
+        name: 'StationNum',
+      );
+    }
+
     setState(() {
       _stationStats = stats;
       _updateDevicesList();
@@ -895,12 +943,16 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       // 根据 ProcessType 和 ClientStatus 确定状态
       String status = _getStatusFromClientStatus(clientStatus, processType);
       
-      // 获取出席和列席人数（如果是 rack 类型）
+      // 出席/列席：WS_StationNum 的 Station 与 IP/站名/NodeID 多路匹配（见 station_stat_lookup）
       int attend = 0;
       int guest = 0;
+      final stat = lookupStationStatRow(
+        _stationStats,
+        ip,
+        stationName: stationName,
+        nodeId: client['NodeID']?.toString(),
+      );
       if (processType == 'rack' || processType == 'Server') {
-        // 优先使用 WS_StationNum 提供的站点统计（按 IP 匹配 Station）
-        final stat = _stationStats[ip];
         if (stat != null) {
           attend = stat['attend'] ?? 0;
           guest = stat['guest'] ?? 0;
@@ -908,6 +960,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           attend = client['attend'] ?? 0;
           guest = client['guest'] ?? 0;
         }
+      } else if (stat != null) {
+        // 非「报到终端」类会标成 Client，但若站名与 WS_StationNum 的 Station 一致仍可显示人数
+        attend = stat['attend'] ?? 0;
+        guest = stat['guest'] ?? 0;
       }
       
       return {
@@ -952,6 +1008,23 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         return '$n|$ip|$node|$st';
       }).join(' , ');
       AppLog.d('Attend devices order: $brief', tag: 'AttendDevices');
+    }
+
+    if (_kLogStationNumAttend) {
+      final statN = _stationStats.length;
+      final keysBrief =
+          _stationStats.keys.take(10).join(',') + (statN > 10 ? '...' : '');
+      final lines = nextDevices
+          .take(24)
+          .map(
+            (d) =>
+                '${d['name']}|${d['ProcessType']}|ip=${d['IP']}|${d['attend']}/${d['guest']}',
+          )
+          .join(' ; ');
+      developer.log(
+        'devices attend snapshot: stationStatMaps=$statN keys=[$keysBrief] rows=$lines',
+        name: 'StationNum',
+      );
     }
 
     _devices = nextDevices;
@@ -1021,6 +1094,34 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return parsed < 0 ? 0 : parsed;
   }
 
+  /// 设备 `IP` 字段可能是 `192.168.1.1:9090`；无端口时 hipc 默认 [defaultPort]。
+  /// IPv6 带端口请使用 `[addr]:port`；裸 IPv6 无端口时走 `http://host:defaultPort/...`。
+  Uri _deviceHipcInfoUri(String ipField, {int defaultPort = 8084}) {
+    final raw = ipField.trim();
+    if (raw.isEmpty) {
+      return Uri(
+        scheme: 'http',
+        host: '127.0.0.1',
+        port: defaultPort,
+        path: '/hipc/info',
+      );
+    }
+    if (raw.startsWith('[')) {
+      return Uri.parse('http://$raw/hipc/info');
+    }
+    final colonCount = ':'.allMatches(raw).length;
+    final lastColon = raw.lastIndexOf(':');
+    if (lastColon > 0 && colonCount == 1) {
+      final host = raw.substring(0, lastColon).trim();
+      final tail = raw.substring(lastColon + 1);
+      final p = int.tryParse(tail);
+      if (host.isNotEmpty && p != null && p > 0 && p <= 65535) {
+        return Uri(scheme: 'http', host: host, port: p, path: '/hipc/info');
+      }
+    }
+    return Uri(scheme: 'http', host: raw, port: defaultPort, path: '/hipc/info');
+  }
+
   Future<void> _onAttendDeviceTap(Map<dynamic, dynamic> device) async {
     final ip = device['IP']?.toString() ?? '';
     if (ip.isEmpty) return;
@@ -1029,13 +1130,16 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     final guest = _parseInt(device['guest']);
     final name = device['name']?.toString() ?? ip;
     final processType = device['ProcessType']?.toString() ?? '';
+    final hipcUri = _deviceHipcInfoUri(ip);
+    final hipcInfoUri = hipcUri.toString();
 
     if (_isSloganPreviewVisible && _sloganPreviewFreeze) {
       return;
     }
     setState(() {
-      _notificationText = '正在获取设备信息...';
+      _notificationText = '正在获取设备信息...\nGET $hipcInfoUri';
     });
+    AppLog.d('设备卡片点击: name=$name ip=$ip -> GET $hipcInfoUri', tag: 'HipcInfo');
     try {
       final hipc = await _fetchHipcInfo(ip);
       final text = _formatHipcInfoText(
@@ -1052,8 +1156,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _notificationText = '获取设备信息失败: $e';
+        _notificationText =
+            '获取设备信息失败: $e\n请求: GET $hipcInfoUri\n（日志里 errno 对应的 port 多为本机临时出站端口）';
       });
+      AppLog.d('GET $hipcInfoUri 失败: $e', tag: 'HipcInfo');
       _showMessage('服务器连接出错', isError: true);
     }
   }
@@ -1061,9 +1167,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   Future<Map<String, dynamic>> _fetchHipcInfo(String ip) async {
     final httpClient = HttpClient();
     try {
-      // 设备侧接口：GET http://{IP}:8084/hipc/info
-      final hostOnly = ip.split(':').first.trim();
-      final uri = Uri.parse('http://$hostOnly:8084/hipc/info');
+      final uri = _deviceHipcInfoUri(ip);
+      AppLog.d('HttpClient.getUrl -> $uri', tag: 'HipcInfo');
       final request = await httpClient.getUrl(uri);
 
       // 连接/读取超时（避免界面长时间卡住）
@@ -1295,7 +1400,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       builder: (BuildContext context) {
         return _StationSelectionDialog(
           stations: stations,
-          title: '选择要上报的站点',
+          title: '选择要上报的报到终端',
         );
       },
     );
@@ -1538,11 +1643,22 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         return AlertDialog(
           title: Row(
             children: [
-              Icon(
-                isSuccess ? Icons.check_circle : Icons.error,
-                color: isSuccess ? Colors.green : Colors.red,
-                size: 24,
-              ),
+              if (isSuccess)
+                Icon(
+                  Icons.check_circle,
+                  color: Colors.green,
+                  size: 24,
+                )
+              else
+                Text(
+                  '×',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w600,
+                    height: 1.0,
+                    color: Colors.red,
+                  ),
+                ),
               SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -1605,7 +1721,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                           r['StationName']?.toString() ?? '未知站点';
 
                       Widget statusMark(bool ok) => Text(
-                            ok ? '✓' : '❕',
+                            ok ? '✓' : '×',
                             style: TextStyle(
                               fontSize: 22,
                               fontWeight: FontWeight.bold,
@@ -1743,11 +1859,22 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         return AlertDialog(
           title: Row(
             children: [
-              Icon(
-                isSuccess ? Icons.check_circle : Icons.error,
-                color: isSuccess ? Colors.green : Colors.red,
-                size: 24,
-              ),
+              if (isSuccess)
+                Icon(
+                  Icons.check_circle,
+                  color: Colors.green,
+                  size: 24,
+                )
+              else
+                Text(
+                  '×',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w600,
+                    height: 1.0,
+                    color: Colors.red,
+                  ),
+                ),
               SizedBox(width: 8),
               Expanded(
                 child: Text(
@@ -1902,9 +2029,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       } catch (_) {
         body = data.toString();
       }
-      debugPrint('[gRPC-PUSH] channel=$ch remark=$rm payload=$body');
+      AppLog.d('channel=$ch remark=$rm payload=$body', tag: 'gRPC-PUSH');
     } catch (e) {
-      debugPrint('[gRPC-PUSH] log error: $e');
+      AppLog.d('log error: $e', tag: 'gRPC-PUSH');
     }
   }
 
@@ -3338,9 +3465,6 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
     try {
       final result = await SccClientWrapper.querySlogan();
-      _logSloganApi(
-        'querySlogan result: success=${result.isSuccess}, msg=${result.msg}, data=${result.data}',
-      );
       if (!result.isSuccess) {
         _showMessage(result.msg, isError: true);
         setState(() {
@@ -3365,12 +3489,6 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           list = maybe;
         }
       }
-      if (list.isNotEmpty) {
-        _logSloganApi('querySlogan first item: ${list.first}');
-      } else {
-        _logSloganApi('querySlogan list is empty');
-      }
-
       final normalized = list.map((e) {
         if (e is Map<String, dynamic>) {
           return {
@@ -3426,25 +3544,11 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     }
   }
 
-  String _extractSloganContent(dynamic item) {
-    if (item == null) return '';
-    if (item is Map) {
-      final map = item.cast<String, dynamic>();
-      final content = (map['content'] ??
-              map['text'] ??
-              map['slogan'] ??
-              map['value'] ??
-              map['data'])
-          ?.toString() ?? '';
-      return content.isNotEmpty ? content : map.toString();
-    }
-    return item.toString();
-  }
-
   String _extractSloganName(dynamic item) {
     if (item is Map) {
       final map = item.cast<String, dynamic>();
-      return (map['SloganName'] ?? map['sloganName'] ?? map['name'] ?? '')
+      // 标语列表名称只展示后端返回的 SloganName 字段
+      return (map['SloganName'] ?? '')
           .toString()
           .trim();
     }
@@ -3701,10 +3805,18 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         'html': Style(
           margin: Margins.zero,
           padding: HtmlPaddings.zero,
+          fontStyle: FontStyle.normal,
         ),
         'body': Style(
           margin: Margins.zero,
           padding: HtmlPaddings.zero,
+          fontStyle: FontStyle.normal,
+        ),
+        'i': Style(
+          fontStyle: FontStyle.normal,
+        ),
+        'em': Style(
+          fontStyle: FontStyle.normal,
         ),
         'img': Style(
           margin: Margins.zero,
@@ -3726,7 +3838,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     final extracted = _normalizeHtmlValue(c);
     if (extracted.isNotEmpty) {
       final decoded = _decodeHtmlEntitiesIfNeeded(extracted);
-      return _normalizeSloganFontFamily(decoded);
+      return _normalizeSloganFontStyle(_normalizeSloganFontFamily(decoded));
     }
 
     // 有些后端可能把整段对象放在 data/content 字段里为 JSON 字符串
@@ -3740,7 +3852,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
             final inner = _normalizeHtmlValue(decoded['content']);
             if (inner.isNotEmpty) {
               final decoded = _decodeHtmlEntitiesIfNeeded(inner);
-              return _normalizeSloganFontFamily(decoded);
+              return _normalizeSloganFontStyle(_normalizeSloganFontFamily(decoded));
             }
           }
         } catch (_) {
@@ -3832,6 +3944,21 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return result;
   }
 
+  String _normalizeSloganFontStyle(String html) {
+    if (html.isEmpty) return html;
+    return html
+        .replaceAll(RegExp(r'</?\s*i\b[^>]*>', caseSensitive: false), '')
+        .replaceAll(RegExp(r'</?\s*em\b[^>]*>', caseSensitive: false), '')
+        .replaceAll(
+          RegExp(r'font-style\s*:\s*italic', caseSensitive: false),
+          'font-style: normal',
+        )
+        .replaceAll(
+          RegExp(r'font-style\s*:\s*oblique', caseSensitive: false),
+          'font-style: normal',
+        );
+  }
+
   Future<void> _confirmDisplaySlogan(dynamic item, int rowIndex) async {
     if (_isSendingSlogan ||
         _isDisplayLoading ||
@@ -3867,8 +3994,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   Widget _buildSloganRow(int index, dynamic item) {
     final name = _extractSloganName(item);
-    final content = _extractSloganContent(item);
-    final displayText = name.isNotEmpty ? name : (content.isNotEmpty ? content : '—');
+    final displayText = name.isNotEmpty ? name : '—';
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
       decoration: BoxDecoration(

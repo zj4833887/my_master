@@ -1,7 +1,5 @@
 import 'dart:developer' as developer;
 
-import 'package:flutter/foundation.dart';
-
 /// Centralized logging switch.
 ///
 /// - Default: off (quiet in production).
@@ -11,12 +9,8 @@ class AppLog {
 
   static void d(String message, {String tag = 'APP'}) {
     if (!enabled) return;
-    if (kDebugMode) {
-      // ignore: avoid_print
-      print('[$tag] $message');
-    } else {
-      developer.log(message, name: tag);
-    }
+    // 统一走 developer.log，避免 debug 下 print 刷屏 flutter run 控制台
+    developer.log(message, name: tag);
   }
 }
 

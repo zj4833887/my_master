@@ -4,6 +4,8 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import '../utils/station_stat_lookup.dart';
+
 /// 设备类型，用于控制颜色与图例
 enum FacilityType {
   cabinet, // 报到机柜
@@ -468,7 +470,7 @@ class DeviceMapWidget extends StatefulWidget {
     this.port1030Map, // 设备是否 1030 端口：facilityId -> true/false
     this.port8084Map, // 设备是否 8084 端口：facilityId -> true/false
     this.facilityNameMap, // 设备显示名称：与 deviceStatusMap 相同的 key（FacilityID/IP/名称等）-> 名称
-    this.stationStats, // 站点人数：IP -> { attend, guest }（与 WS_StationNum 一致）
+    this.stationStats, // 站点人数：Station -> { attend, guest }（与 WS_StationNum 一致，查找见 lookupStationStatRow）
   });
 
   final Function(String)? onCabinetTap; // 点击机柜/设备的回调
@@ -644,7 +646,11 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     if (stats == null || point.ip.isEmpty) {
       return (attend: 0, guest: 0);
     }
-    final row = stats[point.ip];
+    final row = lookupStationStatRow(
+      stats,
+      point.ip,
+      stationName: point.stationName ?? '',
+    );
     if (row == null) return (attend: 0, guest: 0);
     return (
       attend: row['attend'] ?? 0,
