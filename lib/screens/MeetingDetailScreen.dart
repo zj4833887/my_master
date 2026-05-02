@@ -2445,7 +2445,13 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         final String processType = device['ProcessType'] as String;
         final bool isRack = processType == 'rack';
         final String status = device['status'] as String; // 先定义status变量
-        final bool isTapDisabled = status == '空闲' || status == '脱机';
+        final String deviceIp = device['IP']?.toString() ?? '';
+        final bool isDidianLike = processType == 'didian' ||
+            deviceIp.contains(':1030') ||
+            deviceIp.endsWith('1030');
+        // 地垫（1030）：不提供 hipc 详情点击
+        final bool isTapDisabled =
+            status == '空闲' || status == '脱机' || isDidianLike;
         // 状态背景色不同，因此文字也要随之调整可读性
         // 其中“报到/重报”要求背景色与黑色文字
         final Color textColor = status == '工作' || status == '报到' || status == '重报'
