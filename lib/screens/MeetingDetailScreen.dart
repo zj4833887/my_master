@@ -618,7 +618,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
             // 忽略非 DeviceRouteMap 频道的“像点位图”的数据，避免闪烁
           }
         } else if (looksLikeMeetInfo) {
-          _handleMeetInfo(data);
+          _handleMeetInfo(data, meetInfoSource: channel);
         }
       },
       onError: (String error) {
@@ -627,8 +627,34 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     );
   }
 
-  // 处理会议信息 (WS_MeetInfo)
-  void _handleMeetInfo(Map<String, dynamic> data) {
+  File _meetInfoNumsLogFile() {
+    try {
+      if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+        final dir = File(Platform.resolvedExecutable).parent.path;
+        return File('$dir${Platform.pathSeparator}logs.txt');
+      }
+    } catch (_) {}
+    return File(
+      '${Directory.systemTemp.path}${Platform.pathSeparator}logs.txt',
+    );
+  }
+
+  Future<void> _appendWsMeetInfoNumsLog(Map<String, dynamic> nums) async {
+    try {
+      final file = _meetInfoNumsLogFile();
+      final line =
+          '${DateTime.now().toIso8601String()} nums=${jsonEncode(nums)}\n';
+      await file.writeAsString(line, mode: FileMode.append, flush: true);
+    } catch (e) {
+      AppLog.d('logs.txt 写入失败: $e', tag: 'WS_MeetInfo');
+    }
+  }
+
+  // 处理会议信息 (WS_MeetInfo / queryMeetInfo 等)
+  void _handleMeetInfo(
+    Map<String, dynamic> data, {
+    String? meetInfoSource,
+  }) {
     setState(() {
       // 获取嵌套的数据结构 data.data
       final dataData = data['data'] as Map<String, dynamic>?;
@@ -711,6 +737,12 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       }
       
       if (nums != null && nums.isNotEmpty) {
+        if (meetInfoSource == 'WS_MeetInfo') {
+          final numsCopy = Map<String, dynamic>.from(nums);
+          scheduleMicrotask(() {
+            unawaited(_appendWsMeetInfoNumsLog(numsCopy));
+          });
+        }
         // 出席统计数据
         final personnum = _nonNegativeInt(nums['Personnum'] ?? 0);
         final personattendancenum = _nonNegativeInt(nums['Personattendancenum'] ?? 0);
