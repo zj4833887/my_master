@@ -1907,7 +1907,6 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
             .where((c) => selectedSet.contains(c['id']))
             .toList();
 
-    final pageContext = context;
     showDialog(
       context: context,
       builder: (BuildContext dialogContext) {
@@ -2024,7 +2023,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                               child: Text(
                                 stationName,
                                 style: TextStyle(
-                                  fontFamily: '宋体',
+                                  fontFamily: 'Microsoft YaHei',
                                   fontSize: 18,
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -2048,51 +2047,6 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
             ),
           ),
           actions: [
-            TextButton(
-              onPressed: () async {
-                final exportResults = results
-                    .map((e) => Map<String, dynamic>.from(e))
-                    .toList();
-                final exportTables = List<String>.from(selectedTables);
-                final text = _composeDataCheckLogText(
-                  grpcSessionText: _dataCheckGrpcSession.toString(),
-                  checkingClientsJson:
-                      _snapshotCheckingClientsForDataCheckJson(),
-                  results: exportResults,
-                  selectedTables: exportTables,
-                );
-                final suggested =
-                    '数据检验日志_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.txt';
-                final FileSaveLocation? location = await getSaveLocation(
-                  suggestedName: suggested,
-                  acceptedTypeGroups: const [
-                    XTypeGroup(label: '文本', extensions: ['txt']),
-                  ],
-                );
-                if (location == null) return;
-                if (!pageContext.mounted) return;
-                try {
-                  await File(location.path).writeAsString(text, encoding: utf8);
-                  if (!pageContext.mounted) return;
-                  ScaffoldMessenger.of(pageContext).clearSnackBars();
-                  ScaffoldMessenger.of(pageContext).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        '已保存到：${location.path}',
-                        style: const TextStyle(fontFamily: 'Microsoft YaHei'),
-                      ),
-                      backgroundColor: Colors.green,
-                      duration: const Duration(seconds: 4),
-                    ),
-                  );
-                } catch (e) {
-                  if (!pageContext.mounted) return;
-                  _showMessage('另存为失败: $e', isError: true);
-                }
-              },
-              child: Text('另存为…',
-                  style: TextStyle(fontFamily: 'Microsoft YaHei')),
-            ),
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(),
               child: Text('确定',
