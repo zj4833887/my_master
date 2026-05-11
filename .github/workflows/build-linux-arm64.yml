@@ -1,3 +1,5 @@
+# 若 GitHub 提示 “Artifact storage quota has been hit”，需在仓库/组织里清理旧 Artifacts
+# 或升级配额；否则仅上传步骤会失败。已设置 continue-on-error，构建本身仍计为通过。
 name: Build Linux ARM64
 
 on:
@@ -37,8 +39,9 @@ jobs:
             '
 
       - name: Upload artifact
+        continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
           name: my_master-linux-arm64-bundle
           path: build/linux/*/release/bundle/
-          retention-days: 7
+          retention-days: 3
