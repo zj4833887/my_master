@@ -1675,8 +1675,38 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     if (v is int) return v;
     if (v is double) return v.toInt();
     if (v is num) return v.toInt();
+    if (v is bool) return v ? 1 : 0;
     if (v is String) return int.tryParse(v.trim()) ?? 0;
     return 0;
+  }
+
+  bool _hasCheckValue(dynamic v) {
+    if (v == null) return false;
+    if (v is bool) return v;
+    if (v is num) return v != 0;
+    if (v is String) {
+      final t = v.trim();
+      if (t.isEmpty) return false;
+      final n = num.tryParse(t);
+      if (n != null) return n != 0;
+      return true;
+    }
+    return true;
+  }
+
+  bool _isCheckPassed(dynamic v) {
+    return _safeInt(v) == 1;
+  }
+
+  dynamic _valueByFieldKey(Map<String, dynamic> row, String field) {
+    if (row.containsKey(field)) return row[field];
+    final lowerField = field.toLowerCase();
+    for (final entry in row.entries) {
+      if (entry.key.toLowerCase() == lowerField) {
+        return entry.value;
+      }
+    }
+    return null;
   }
 
   void _appendDataCheckGrpcLog<T>(
@@ -1780,8 +1810,13 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       for (final column in visibleColumns) {
         final field = column['field'] ?? '';
         final title = column['title'] ?? field;
-        final ok = _safeInt(r[field]) == 1;
+        final raw = _valueByFieldKey(r, field);
+        if (!_hasCheckValue(raw)) continue;
+        final ok = _isCheckPassed(raw);
         parts.add('$title:${ok ? '✓' : '×'}');
+      }
+      if (parts.length == 1) {
+        parts.add('无可判定字段');
       }
       buf.writeln(parts.join(' | '));
     }
@@ -1956,15 +1991,29 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                       final stationName =
                           r['StationName']?.toString() ?? '未知站点';
 
-                      Widget statusMark(bool ok) => Text(
-                            ok ? '✓' : '×',
+                      Widget statusMark(dynamic raw) {
+                        if (!_hasCheckValue(raw)) {
+                          return Text(
+                            '-',
                             style: TextStyle(
-                              fontSize: 22,
+                              fontSize: 20,
                               fontWeight: FontWeight.bold,
-                              color: ok ? Colors.green : Colors.amber.shade700,
+                              color: Colors.grey.shade500,
                               fontFamily: 'Microsoft YaHei',
                             ),
                           );
+                        }
+                        final ok = _isCheckPassed(raw);
+                        return Text(
+                          ok ? '✓' : '×',
+                          style: TextStyle(
+                            fontSize: 22,
+                            fontWeight: FontWeight.bold,
+                            color: ok ? Colors.green : Colors.amber.shade700,
+                            fontFamily: 'Microsoft YaHei',
+                          ),
+                        );
+                      }
 
                       return Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -1984,9 +2033,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                             ),
                             ...visibleColumns.map((column) {
                               final field = column['field'] ?? '';
-                              final ok = _safeInt(r[field]) == 1;
+                              final raw = _valueByFieldKey(r, field);
                               return Expanded(
-                                child: Center(child: statusMark(ok)),
+                                child: Center(child: statusMark(raw)),
                               );
                             }),
                           ],
