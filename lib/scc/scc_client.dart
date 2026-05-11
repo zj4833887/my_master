@@ -12,10 +12,14 @@ class ApiResult<T> {
   final String msg;
   final T? data;
 
+  /// gRPC [GResponse] 原始字段（code/msg/data/remark），便于写检验日志等。
+  final Map<String, dynamic>? grpcSnapshot;
+
   ApiResult({
     required this.code,
     required this.msg,
     this.data,
+    this.grpcSnapshot,
   });
 
   bool get isSuccess => code == 200;
@@ -33,6 +37,15 @@ class ProgressStepResult {
 
 class SccClientWrapper {
   SccClientWrapper._();
+
+  static Map<String, dynamic> _grpcResponseSnapshot(GResponse resp) {
+    return <String, dynamic>{
+      'code': resp.code,
+      'msg': resp.msg,
+      'data': resp.data,
+      'remark': resp.remark,
+    };
+  }
 
   static Scc? _client;
 
@@ -368,6 +381,7 @@ class SccClientWrapper {
         code: resp.code,
         msg: resp.msg,
         data: resultData.isEmpty ? null : resultData,
+        grpcSnapshot: _grpcResponseSnapshot(resp),
       );
     } catch (e) {
       AppLog.d('databaseCheck error: $e', tag: 'SccClientWrapper');
@@ -375,6 +389,9 @@ class SccClientWrapper {
         code: -1,
         msg: _normalizeSccError(e),
         data: null,
+        grpcSnapshot: <String, dynamic>{
+          'exception': e.toString(),
+        },
       );
     }
   }
@@ -389,12 +406,16 @@ class SccClientWrapper {
         code: resp.code,
         msg: resp.msg,
         data: resp.code == 200,
+        grpcSnapshot: _grpcResponseSnapshot(resp),
       );
     } catch (e) {
       return ApiResult(
         code: -1,
         msg: _normalizeSccError(e),
         data: false,
+        grpcSnapshot: <String, dynamic>{
+          'exception': e.toString(),
+        },
       );
     }
   }

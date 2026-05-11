@@ -6,6 +6,7 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter_html/flutter_html.dart';
+import 'package:intl/intl.dart';
 import '../utils/app_log.dart';
 import '../utils/station_stat_lookup.dart';
 import '../scc/scc_client.dart';
@@ -60,6 +61,18 @@ class MeetingDetailScreen extends StatefulWidget {
 
 class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     with SingleTickerProviderStateMixin {
+  /// 与数据检验结果表格列一致，供导出日志复用。
+  static const List<Map<String, String>> _kDataCheckColumnDefs = [
+    {'id': 'meet', 'title': '会议表', 'field': 'Meet'},
+    {
+      'id': 'personinformationphoto',
+      'title': '人员表',
+      'field': 'PersonInformationPhoto',
+    },
+    {'id': 'delegateregister', 'title': '代表表', 'field': 'DelegateRegister'},
+    {'id': 'personinformation', 'title': '人员基础表', 'field': 'PersonInformation'},
+  ];
+
   late TabController _tabController;
   bool _isMeetingManagementSelected = true;
 
@@ -116,6 +129,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   Timer? _dataCheckTimer;
   List<Map<String, dynamic>> _dataCheckResults = [];
   List<String> _selectedDataCheckTables = [];
+  /// 本次点击「数据校验」以来 gRPC 接口的原始返回（含请求名与时间戳）。
+  StringBuffer _dataCheckGrpcSession = StringBuffer();
   Timer? _usbAutoImportTimer;
   bool _isUsbAutoImporting = false;
   Set<String> _knownUsbRoots = {};
@@ -1496,31 +1511,64 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       _selectedDataCheckTables = List<String>.from(selectedTables);
     });
 
+    _dataCheckGrpcSession = StringBuffer();
+    final tablesCopy = List<String>.from(selectedTables);
+    final stationsStr = selectedStations.join(',');
+    final tablesStr = selectedTables.join(',');
+
     try {
       // 1. 先结束之前的检查
-      await SccClientWrapper.endDatabaseCheck();
+      final endRes = await SccClientWrapper.endDatabaseCheck();
+      _appendDataCheckGrpcLog(
+        'endDatabaseCheck',
+        endRes,
+        request: const <String, dynamic>{},
+      );
       // 2. 显示开始检查的消息
       _showMessage('开始校验', isError: false);
-      
+
       // 3. 开始新的检查
-      final stationsStr = selectedStations.join(',');
-      final tablesStr = selectedTables.join(',');
       final checkResult = await SccClientWrapper.databaseCheck(
         meetID: widget.meetId!,
         stations: stationsStr,
         tables: tablesStr,
       );
-      
+      _appendDataCheckGrpcLog(
+        'databaseCheck',
+        checkResult,
+        request: <String, dynamic>{
+          'meetID': widget.meetId!,
+          'stations': stationsStr,
+          'tables': tablesStr,
+        },
+      );
+
       if (checkResult.isSuccess) {
         // 4. 开始轮询检查状态
         _startDataCheckPolling();
       } else {
+        await _persistDataCheckLogAfterCheckAsync(
+          results: const [],
+          selectedTables: tablesCopy,
+          emptySummary:
+              checkResult.msg.isNotEmpty ? checkResult.msg : '数据检查失败',
+        );
+        if (!mounted) return;
         _showMessage(checkResult.msg.isNotEmpty ? checkResult.msg : '数据检查失败', isError: true);
         setState(() {
           _isLoading = false;
         });
       }
     } catch (e) {
+      _dataCheckGrpcSession.writeln('[${DateFormat('yyyy-MM-dd HH:mm:ss.SSS').format(DateTime.now())}] 客户端异常');
+      _dataCheckGrpcSession.writeln(e.toString());
+      _dataCheckGrpcSession.writeln('');
+      await _persistDataCheckLogAfterCheckAsync(
+        results: const [],
+        selectedTables: tablesCopy,
+        emptySummary: '操作失败: $e',
+      );
+      if (!mounted) return;
       _showMessage('操作失败: $e', isError: true);
       setState(() {
         _isLoading = false;
@@ -1592,7 +1640,13 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   // 显示数据检查最终结果
   void _showDataCheckFinalResults() {
+    final tablesCopy = List<String>.from(_selectedDataCheckTables);
     if (_dataCheckResults.isEmpty) {
+      _persistDataCheckLogAfterCheck(
+        results: const [],
+        selectedTables: tablesCopy,
+        emptySummary: '检查完成，但未返回详细数据',
+      );
       _showDataCheckResult(
         title: '数据检查完成',
         result: '检查完成，但未返回详细数据',
@@ -1601,6 +1655,13 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       return;
     }
 
+    final resultsCopy = _dataCheckResults
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+    _persistDataCheckLogAfterCheck(
+      results: resultsCopy,
+      selectedTables: tablesCopy,
+    );
     _showDataCheckResultList(
       title: '数据检查完成',
       results: _dataCheckResults,
@@ -1618,27 +1679,203 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return 0;
   }
 
+  void _appendDataCheckGrpcLog<T>(
+    String apiName,
+    ApiResult<T> result, {
+    Map<String, dynamic>? request,
+  }) {
+    final ts = DateFormat('yyyy-MM-dd HH:mm:ss.SSS').format(DateTime.now());
+    _dataCheckGrpcSession.writeln('[$ts] $apiName');
+    if (request != null && request.isNotEmpty) {
+      _dataCheckGrpcSession.writeln('请求: ${jsonEncode(request)}');
+    }
+    final snap = result.grpcSnapshot;
+    if (snap != null) {
+      _dataCheckGrpcSession.writeln('GResponse 原始字段:');
+      try {
+        _dataCheckGrpcSession.writeln(
+          const JsonEncoder.withIndent('  ').convert(snap),
+        );
+      } catch (_) {
+        _dataCheckGrpcSession.writeln(snap.toString());
+      }
+    }
+    _dataCheckGrpcSession.writeln(
+      'ApiResult 封装: code=${result.code}, msg=${result.msg}, data=${result.data}',
+    );
+    _dataCheckGrpcSession.writeln('');
+  }
+
+  /// 当前 WS 下发的客户端列表中，与数据检验相关的条目（含 Remark、DataCheckStatus 等全字段）。
+  String _snapshotCheckingClientsForDataCheckJson() {
+    final list = _clientList
+        .where((client) {
+          final status = client['DataCheckStatus'];
+          return status != null && status != 0;
+        })
+        .map((c) => Map<String, dynamic>.from(c))
+        .toList();
+    try {
+      return const JsonEncoder.withIndent('  ').convert(list);
+    } catch (_) {
+      return jsonEncode(list);
+    }
+  }
+
+  /// 数据检验日志默认目录：用户文档下 `my_master/data_check_logs`。
+  String _dataCheckLogBaseDir() {
+    final home = Platform.environment['USERPROFILE'] ??
+        Platform.environment['HOME'];
+    if (home == null || home.isEmpty) {
+      return Directory.systemTemp.path;
+    }
+    if (Platform.isWindows) {
+      return '$home${Platform.pathSeparator}Documents${Platform.pathSeparator}my_master${Platform.pathSeparator}data_check_logs';
+    }
+    return '$home${Platform.pathSeparator}Documents${Platform.pathSeparator}my_master${Platform.pathSeparator}data_check_logs';
+  }
+
+  String _composeDataCheckLogText({
+    required String grpcSessionText,
+    required String checkingClientsJson,
+    required List<Map<String, dynamic>> results,
+    required List<String> selectedTables,
+    String? emptySummary,
+  }) {
+    final ts = DateFormat('yyyy-MM-dd HH:mm:ss').format(DateTime.now());
+    final selectedSet =
+        selectedTables.map((e) => e.toLowerCase().trim()).toSet();
+    final visibleColumns = selectedSet.isEmpty
+        ? _kDataCheckColumnDefs
+        : _kDataCheckColumnDefs
+            .where((c) => selectedSet.contains(c['id']))
+            .toList();
+
+    final buf = StringBuffer();
+    buf.writeln('========== 数据检验日志 ==========');
+    buf.writeln('生成时间: $ts');
+    buf.writeln('会议名称: ${widget.meetingName}');
+    buf.writeln('会议ID: ${widget.meetId ?? ''}');
+    buf.writeln('校验表: ${selectedTables.isEmpty ? '(全部)' : selectedTables.join(', ')}');
+    buf.writeln('');
+    buf.writeln('========== gRPC 接口原始返回（endDatabaseCheck / databaseCheck）==========');
+    buf.writeln(
+      grpcSessionText.trim().isEmpty ? '(本会话无 gRPC 记录)' : grpcSessionText,
+    );
+    buf.writeln('');
+    buf.writeln('========== 检验相关客户端完整字段（WS 列表子集）==========');
+    buf.writeln(checkingClientsJson);
+    buf.writeln('');
+    if (results.isEmpty) {
+      buf.writeln('--- 检验结果摘要 ---');
+      buf.writeln(emptySummary ?? '无站点明细');
+      buf.writeln('');
+      return buf.toString();
+    }
+
+    buf.writeln('--- 汇总（✓=通过 / ×=不通过）---');
+    for (final r in results) {
+      final name = r['StationName']?.toString() ?? '未知站点';
+      final parts = <String>[name];
+      for (final column in visibleColumns) {
+        final field = column['field'] ?? '';
+        final title = column['title'] ?? field;
+        final ok = _safeInt(r[field]) == 1;
+        parts.add('$title:${ok ? '✓' : '×'}');
+      }
+      buf.writeln(parts.join(' | '));
+    }
+    buf.writeln('');
+    buf.writeln('--- 原始 JSON（按站点）---');
+    for (final r in results) {
+      buf.writeln(jsonEncode(r));
+    }
+    buf.writeln('');
+    return buf.toString();
+  }
+
+  Future<String?> _writeDataCheckLogToDocuments(String text) async {
+    try {
+      final dir = Directory(_dataCheckLogBaseDir());
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+      final stamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
+      final rawId = widget.meetId ?? 'unknown';
+      final safeMeet =
+          rawId.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_').trim();
+      final name = '数据检验日志_${safeMeet}_$stamp.txt';
+      final file = File('${dir.path}${Platform.pathSeparator}$name');
+      await file.writeAsString(text, encoding: utf8);
+      return file.path;
+    } catch (e) {
+      AppLog.d('_writeDataCheckLogToDocuments: $e', tag: 'DataCheckLog');
+      return null;
+    }
+  }
+
+  Future<void> _persistDataCheckLogAfterCheckAsync({
+    required List<Map<String, dynamic>> results,
+    required List<String> selectedTables,
+    String? emptySummary,
+  }) async {
+    final grpcSnap = _dataCheckGrpcSession.toString();
+    final clientsSnap = _snapshotCheckingClientsForDataCheckJson();
+    final text = _composeDataCheckLogText(
+      grpcSessionText: grpcSnap,
+      checkingClientsJson: clientsSnap,
+      results: results,
+      selectedTables: selectedTables,
+      emptySummary: emptySummary,
+    );
+    final path = await _writeDataCheckLogToDocuments(text);
+    if (!mounted) return;
+    if (path != null) {
+      _showMessage(
+        '检验日志已保存：$path',
+        duration: const Duration(seconds: 5),
+      );
+    } else {
+      _showMessage(
+        '检验日志自动保存失败，可在结果窗口点击「另存为」导出',
+        isError: true,
+        duration: const Duration(seconds: 4),
+      );
+    }
+  }
+
+  void _persistDataCheckLogAfterCheck({
+    required List<Map<String, dynamic>> results,
+    required List<String> selectedTables,
+    String? emptySummary,
+  }) {
+    () async {
+      await _persistDataCheckLogAfterCheckAsync(
+        results: results,
+        selectedTables: selectedTables,
+        emptySummary: emptySummary,
+      );
+    }();
+  }
+
   void _showDataCheckResultList({
     required String title,
     required List<Map<String, dynamic>> results,
     required List<String> selectedTables,
     required bool isSuccess,
   }) {
-    final allColumns = <Map<String, String>>[
-      {'id': 'meet', 'title': '会议表', 'field': 'Meet'},
-      {'id': 'personinformationphoto', 'title': '人员表', 'field': 'PersonInformationPhoto'},
-      {'id': 'delegateregister', 'title': '代表表', 'field': 'DelegateRegister'},
-      {'id': 'personinformation', 'title': '人员基础表', 'field': 'PersonInformation'},
-    ];
     final selectedSet =
         selectedTables.map((e) => e.toLowerCase().trim()).toSet();
     final visibleColumns = selectedSet.isEmpty
-        ? allColumns
-        : allColumns.where((c) => selectedSet.contains(c['id'])).toList();
+        ? _kDataCheckColumnDefs
+        : _kDataCheckColumnDefs
+            .where((c) => selectedSet.contains(c['id']))
+            .toList();
 
+    final pageContext = context;
     showDialog(
       context: context,
-      builder: (BuildContext context) {
+      builder: (BuildContext dialogContext) {
         return AlertDialog(
           title: Row(
             children: [
@@ -1763,7 +2000,52 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () async {
+                final exportResults = results
+                    .map((e) => Map<String, dynamic>.from(e))
+                    .toList();
+                final exportTables = List<String>.from(selectedTables);
+                final text = _composeDataCheckLogText(
+                  grpcSessionText: _dataCheckGrpcSession.toString(),
+                  checkingClientsJson:
+                      _snapshotCheckingClientsForDataCheckJson(),
+                  results: exportResults,
+                  selectedTables: exportTables,
+                );
+                final suggested =
+                    '数据检验日志_${DateFormat('yyyyMMdd_HHmmss').format(DateTime.now())}.txt';
+                final FileSaveLocation? location = await getSaveLocation(
+                  suggestedName: suggested,
+                  acceptedTypeGroups: const [
+                    XTypeGroup(label: '文本', extensions: ['txt']),
+                  ],
+                );
+                if (location == null) return;
+                if (!pageContext.mounted) return;
+                try {
+                  await File(location.path).writeAsString(text, encoding: utf8);
+                  if (!pageContext.mounted) return;
+                  ScaffoldMessenger.of(pageContext).clearSnackBars();
+                  ScaffoldMessenger.of(pageContext).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        '已保存到：${location.path}',
+                        style: const TextStyle(fontFamily: 'Microsoft YaHei'),
+                      ),
+                      backgroundColor: Colors.green,
+                      duration: const Duration(seconds: 4),
+                    ),
+                  );
+                } catch (e) {
+                  if (!pageContext.mounted) return;
+                  _showMessage('另存为失败: $e', isError: true);
+                }
+              },
+              child: Text('另存为…',
+                  style: TextStyle(fontFamily: 'Microsoft YaHei')),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
               child: Text('确定',
                   style: TextStyle(fontFamily: 'Microsoft YaHei')),
             ),
@@ -1830,7 +2112,11 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   }
 
   // 显示消息
-  void _showMessage(String message, {bool isError = false}) {
+  void _showMessage(
+    String message, {
+    bool isError = false,
+    Duration? duration,
+  }) {
     final messenger = ScaffoldMessenger.of(context);
     // 避免多次操作导致 SnackBar 排队，从而出现“状态已结束但提示是开始成功”
     messenger.clearSnackBars();
@@ -1841,7 +2127,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           style: TextStyle(fontFamily: 'Microsoft YaHei'),
         ),
         backgroundColor: isError ? Colors.red : Colors.green,
-        duration: Duration(seconds: 2),
+        duration: duration ?? const Duration(seconds: 2),
       ),
     );
   }
