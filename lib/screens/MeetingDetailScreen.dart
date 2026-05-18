@@ -121,9 +121,28 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   List<Map<String, dynamic>> _devices = [];
   Map<String, int> _lastWsClientOrderByDevice = {};
   static const bool _kLogWsClientOrderDiff = false;
+  /// WS_Client 写入 txt 日志（`文档/my_master/ws_client_logs`）。
+  static const bool _kWsClientTxtLog = false;
 
   // 调试：打印设备排序（用于定位“乱跳”）
   static const bool _kLogDeviceOrder = false;
+
+  /// 通知区设备明细（hipc）字号，尽量占满卡片可读区域。
+  static const TextStyle _hipcNotificationTextStyle = TextStyle(
+    fontSize: 18,
+    height: 1.6,
+    fontFamily: 'Microsoft YaHei',
+    color: Colors.black87,
+    fontWeight: FontWeight.w500,
+  );
+
+  /// 报到情况卡片：出席/列席人数统一样式。
+  static const TextStyle _attendGuestCountTextStyle = TextStyle(
+    fontSize: 14,
+    fontWeight: FontWeight.w600,
+    fontFamily: 'Microsoft YaHei',
+    color: Colors.black87,
+  );
 
   // 数据检查相关
   Timer? _dataCheckTimer;
@@ -145,6 +164,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   // 通知信息（右侧卡片）
   String _notificationText = '';
+  /// 是否为设备 hipc 明细（用大字号展示，不含后端原始 JSON）。
+  bool _notificationHipcDetail = false;
 
   // 调试：输出 gRPC 推送原始数据（不受 AppLog.enabled 限制）
   static const bool _kLogGrpcPush = false;
@@ -665,6 +686,52 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     }
   }
 
+  /// WS_Client 日志目录：`文档/my_master/ws_client_logs`。
+  String _wsClientLogBaseDir() {
+    final home = Platform.environment['USERPROFILE'] ??
+        Platform.environment['HOME'];
+    if (home == null || home.isEmpty) {
+      return Directory.systemTemp.path;
+    }
+    return '$home${Platform.pathSeparator}Documents${Platform.pathSeparator}my_master${Platform.pathSeparator}ws_client_logs';
+  }
+
+  Future<void> _appendWsClientLog(Map<String, dynamic> payload) async {
+    if (!_kWsClientTxtLog) return;
+    try {
+      final dir = Directory(_wsClientLogBaseDir());
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+      final day = DateFormat('yyyyMMdd').format(DateTime.now());
+      final meetPart = (widget.meetId ?? 'unknown')
+          .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
+          .trim();
+      final file = File(
+        '${dir.path}${Platform.pathSeparator}ws_client_${meetPart}_$day.txt',
+      );
+      final ts = DateFormat('yyyy-MM-dd HH:mm:ss.SSS').format(DateTime.now());
+      final body = StringBuffer()
+        ..writeln('[$ts] WS_Client')
+        ..writeln('会议: ${widget.meetingName} (${widget.meetId ?? ''})')
+        ..writeln('--- 原始 JSON ---');
+      try {
+        body.writeln(const JsonEncoder.withIndent('  ').convert(payload));
+      } catch (_) {
+        body.writeln(jsonEncode(payload));
+      }
+      body.writeln('');
+      await file.writeAsString(
+        body.toString(),
+        mode: FileMode.append,
+        encoding: utf8,
+        flush: true,
+      );
+    } catch (e) {
+      AppLog.d('WS_Client txt 写入失败: $e', tag: 'WS_Client');
+    }
+  }
+
   // 处理会议信息 (WS_MeetInfo / queryMeetInfo 等)
   void _handleMeetInfo(
     Map<String, dynamic> data, {
@@ -836,6 +903,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     if (data['code'] != 200) return;
     final list = data['data'];
     if (list is! List) return;
+
+    if (_kWsClientTxtLog) {
+      unawaited(_appendWsClientLog(Map<String, dynamic>.from(data)));
+    }
 
     _logWsClientOrderDiffIfChanged(list);
 
@@ -1178,13 +1249,14 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       return;
     }
     setState(() {
+      _notificationHipcDetail = false;
       _notificationText = '正在获取设备信息...\nGET $hipcInfoUri';
     });
     AppLog.d('设备卡片点击: name=$name ip=$ip -> GET $hipcInfoUri', tag: 'HipcInfo');
     try {
-      final hipc = await _fetchHipcInfo(ip);
+      final hipcResult = await _fetchHipcInfo(ip);
       final text = _formatHipcInfoText(
-        hipc,
+        hipcResult.body,
         deviceName: name,
         attend: attend,
         guest: guest,
@@ -1192,11 +1264,13 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       );
       if (!mounted) return;
       setState(() {
+        _notificationHipcDetail = true;
         _notificationText = text;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() {
+        _notificationHipcDetail = false;
         _notificationText =
             '获取设备信息失败: $e\n请求: GET $hipcInfoUri\n（日志里 errno 对应的 port 多为本机临时出站端口）';
       });
@@ -1205,7 +1279,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     }
   }
 
-  Future<Map<String, dynamic>> _fetchHipcInfo(String ip) async {
+  Future<({Map<String, dynamic> body, String raw})> _fetchHipcInfo(String ip) async {
     final httpClient = HttpClient();
     try {
       final uri = _deviceHipcInfoUri(ip);
@@ -1222,18 +1296,50 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
       final bodyBytes = await response.transform(utf8.decoder).toList();
       final bodyStr = bodyBytes.join();
+      AppLog.d('hipc/info 原始响应:\n$bodyStr', tag: 'HipcInfo');
+      developer.log(bodyStr, name: 'HipcInfo');
       final decoded = jsonDecode(bodyStr);
       if (decoded is Map<String, dynamic>) {
-        return decoded;
+        return (body: decoded, raw: bodyStr);
       }
       if (decoded is Map) {
-        return decoded.cast<String, dynamic>();
+        return (body: decoded.cast<String, dynamic>(), raw: bodyStr);
       }
 
       throw Exception('返回内容格式异常');
     } finally {
       httpClient.close(force: true);
     }
+  }
+
+  /// 解析 hipc 容量串中的数值（如 `30Gi` → 30），用于算占用率。
+  List<double> _parseHipcSizeNumbers(String raw) {
+    final parts = raw.trim().split(RegExp(r'\s+'));
+    final nums = <double>[];
+    for (final part in parts) {
+      final m = RegExp(r'^([\d.]+)').firstMatch(part);
+      if (m == null) continue;
+      final n = double.tryParse(m.group(1)!);
+      if (n != null) nums.add(n);
+    }
+    return nums;
+  }
+
+  /// 将 `总量 已用 …` 转为占用率百分比；已是 `%` 则原样返回。
+  String _formatHipcUsagePercent(String? raw, {required int usedIndex}) {
+    if (raw == null || raw.trim().isEmpty) return '-';
+    final text = raw.trim();
+    if (text.contains('%')) return text;
+
+    final nums = _parseHipcSizeNumbers(text);
+    if (nums.isEmpty) return text;
+    if (nums.length == 1) return text;
+
+    final total = nums[0];
+    final used = usedIndex < nums.length ? nums[usedIndex] : nums[1];
+    if (total <= 0) return '-';
+    final pct = (used / total * 100).clamp(0.0, 100.0);
+    return '${pct.toStringAsFixed(1)}%';
   }
 
   String _formatHipcInfoText(
@@ -1258,7 +1364,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         : modeLower == 'backup'
             ? '备机'
             : mode;
-    // hdinfo：示例里包含 hostname/kernel/os/arch/cpu/mem 等（不再展示 boot 系统启动时间）
+    // hdinfo：hostname/kernel/os/cpu/mem/disk 等（不展示 arch、boot）
     final hdinfoRaw = dataMap['hdinfo'];
     final hdinfoMap =
         hdinfoRaw is Map ? hdinfoRaw.cast<String, dynamic>() : <String, dynamic>{};
@@ -1273,9 +1379,14 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     buf.writeln('  主机名: ${_get('hostname') ?? '-'}');
     buf.writeln('  内核: ${_get('kernel') ?? '-'}');
     buf.writeln('  操作系统: ${_get('os') ?? '-'}');
-    buf.writeln('  架构: ${_get('arch') ?? '-'}');
-    buf.writeln('  CPU: ${_get('cpu') ?? ''}');
-    buf.writeln('  内存: ${_get('mem') ?? '-'}');
+    buf.writeln('  CPU: ${_get('cpu') ?? '-'}');
+    buf.writeln(
+      '  内存占用率: ${_formatHipcUsagePercent(_get('mem'), usedIndex: 1)}',
+    );
+    final disk = _get('disk');
+    if (disk != null && disk.isNotEmpty) {
+      buf.writeln('  磁盘占用率: ${_formatHipcUsagePercent(disk, usedIndex: 1)}');
+    }
 
     return buf.toString();
   }
@@ -2434,17 +2545,16 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return true;
   }
 
-  // 完全按照图片样式重新设计统计卡片
+  // 统计条：出席/列席标题 + 白框（描述靠左，数字居中，单行）
   Widget _buildStatCard(String title, Map<String, int> stats) {
     return Container(
-      padding: EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
       decoration: BoxDecoration(borderRadius: BorderRadius.circular(8)),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // 标题部分 - 左侧
           ConstrainedBox(
-            constraints: BoxConstraints(minWidth: 60),
+            constraints: const BoxConstraints(minWidth: 52),
             child: MixedFontText(
               '$title:',
               style: TextStyle(
@@ -2452,7 +2562,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                 fontFamily: 'FZXBYS',
                 fontWeight: FontWeight.bold,
                 color: HexColor('#FFFF00'),
-                shadows: [
+                shadows: const [
                   Shadow(
                     color: Colors.black54,
                     offset: Offset(1, 1),
@@ -2462,10 +2572,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
               ),
             ),
           ),
-
-          SizedBox(width: 12),
-
-          // 统计卡片区域 - 右侧
+          const SizedBox(width: 6),
           Expanded(
             child: Row(
               children: stats.entries.map((entry) {
@@ -2474,12 +2581,12 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
                 return Expanded(
                   child: Container(
-                    margin: EdgeInsets.symmetric(horizontal: 4),
-                    padding: EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+                    margin: const EdgeInsets.symmetric(horizontal: 2),
+                    padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
                     decoration: BoxDecoration(
                       color: Colors.white,
                       borderRadius: BorderRadius.circular(6),
-                      boxShadow: [
+                      boxShadow: const [
                         BoxShadow(
                           color: Colors.black26,
                           blurRadius: 3,
@@ -2488,27 +2595,31 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                       ],
                     ),
                     child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween, // 两端对齐
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
-                        // 左侧：标签
                         MixedFontText(
                           '$label:',
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 28,
                             fontFamily: 'FZXBYS',
                             fontWeight: FontWeight.w600,
                             color: Colors.black,
                           ),
                         ),
-                        // 右侧：数字
-                        MixedFontText(
-                          value.toString(),
-                          style: TextStyle(
-                            fontFamily: 'FZXBYS',
-                            fontSize: 26,
-                            fontWeight: FontWeight.bold,
-                            color: HexColor('#A30014'),
+                        Expanded(
+                          child: Center(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: MixedFontText(
+                                value.toString(),
+                                style: TextStyle(
+                                  fontFamily: 'FZXBYS',
+                                  fontSize: 26,
+                                  fontWeight: FontWeight.bold,
+                                  color: HexColor('#A30014'),
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       ],
@@ -2590,8 +2701,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
               port1030Map: port1030Map,
               facilityNameMap: facilityNameMap,
               stationStats: _stationStats,
-              onCabinetTap: (facilityId) {
-                _selectedFacilityIdNotifier.value = facilityId;
+              onCabinetTap: (selectionKey) {
+                _selectedFacilityIdNotifier.value = selectionKey;
               },
             );
           },
@@ -2824,12 +2935,6 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                           color: Colors.white.withOpacity(0.5),
                           width: 1.5,
                         ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.3),
-                            offset: Offset(0, 2),
-                          ),
-                        ],
                       ),
                       padding: _getStatusPadding(processType),
                       child: Text(
@@ -2842,9 +2947,6 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                           fontWeight: FontWeight.bold,
                           color: textColor,
                           fontFamily: 'Microsoft YaHei',
-                          shadows: [
-                            Shadow(color: Colors.black, offset: Offset(1, 1)),
-                          ],
                         ),
                         textAlign: TextAlign.center,
                       ),
@@ -2867,28 +2969,19 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                 ),
               ),
 
-              // 人数信息（仅显示会议厅）
+              // 人数信息（出席/列席统一字体与颜色）
               Padding(
                 padding: EdgeInsets.all(0),
                 child: Column(
                   children: [
                     MixedFontText(
                       '出席: ${device['attend']}',
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        fontFamily: 'FZXBYS',
-                      ),
+                      style: _attendGuestCountTextStyle,
                     ),
                     SizedBox(height: 2),
                     MixedFontText(
                       '列席: ${device['guest']}',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey[700],
-                        fontFamily: 'FZXBYS',
-                      ),
+                      style: _attendGuestCountTextStyle,
                     ),
                   ],
                 ),
@@ -3973,6 +4066,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     if (!mounted) return;
     setState(() {
       _notificationText = ''; // 不再输出纯文本，避免重复展示
+      _notificationHipcDetail = false;
       _sloganPreviewTemplate = template;
       _sloganPreviewFreeze = freeze;
       // 兼容：如果模板为空，仍然显示解析出的静态文本
@@ -4413,7 +4507,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                           _meetingTitleDisplay,
                           style: TextStyle(
                             fontFamily: 'FZXBYS',
-                            fontSize: 28,
+                            fontSize: 34,
                             fontWeight: FontWeight.bold,
                             color: Color.fromARGB(255, 237, 252, 32),
                             shadows: [
@@ -4531,6 +4625,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                                         true;
                                                     // 切到会议管理时清空通知与预览
                                                     _notificationText = '';
+                                                    _notificationHipcDetail = false;
                                                     _isSloganPreviewVisible = false;
                                                     _sloganPreviewText = '';
                                                     _frozenSloganPreviewWidget = null;
@@ -4678,7 +4773,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                                 borderRadius:
                                                     BorderRadius.circular(6),
                                               ),
-                                              padding: const EdgeInsets.all(8),
+                                              padding: EdgeInsets.all(
+                                                _notificationHipcDetail ? 14 : 8,
+                                              ),
                                               child: (_isSloganPreviewVisible &&
                                                       (_sloganPreviewFreeze ||
                                                           _notificationText
@@ -4723,26 +4820,39 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                                     );
                                                       },
                                                     )
-                                                  : SingleChildScrollView(
-                                                      child: Column(
-                                                        crossAxisAlignment:
-                                                            CrossAxisAlignment
-                                                                .stretch,
-                                                        children: [
-                                                          MixedFontText(
-                                                            _notificationText
-                                                                    .trim()
-                                                                    .isNotEmpty
-                                                                ? _notificationText
-                                                                : _defaultMeetingStatusText,
-                                                            style:
-                                                                const TextStyle(
-                                                              fontSize: 14,
-                                                              fontFamily:
-                                                                  'Microsoft YaHei',
+                                                  : Align(
+                                                      alignment:
+                                                          Alignment.topLeft,
+                                                      child: SingleChildScrollView(
+                                                        child: Column(
+                                                          crossAxisAlignment:
+                                                              CrossAxisAlignment
+                                                                  .stretch,
+                                                          children: [
+                                                            SizedBox(
+                                                              width: double
+                                                                  .infinity,
+                                                              child:
+                                                                  MixedFontText(
+                                                                _notificationText
+                                                                        .trim()
+                                                                        .isNotEmpty
+                                                                    ? _notificationText
+                                                                    : _defaultMeetingStatusText,
+                                                                style: _notificationHipcDetail &&
+                                                                        _notificationText
+                                                                            .trim()
+                                                                            .isNotEmpty
+                                                                    ? _hipcNotificationTextStyle
+                                                                    : const TextStyle(
+                                                                        fontSize:
+                                                                            14,
+                                                                        fontFamily:
+                                                                            'Microsoft YaHei',
+                                                                      ),
+                                                              ),
                                                             ),
-                                                          ),
-                                                          if (_isSloganPreviewVisible)
+                                                            if (_isSloganPreviewVisible)
                                                             Builder(
                                                               builder:
                                                                   (context) {
@@ -4792,7 +4902,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                                             );
                                                               },
                                                             ),
-                                                        ],
+                                                          ],
+                                                        ),
                                                       ),
                                                     ),
                                             ),

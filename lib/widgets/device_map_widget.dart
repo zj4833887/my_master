@@ -38,11 +38,23 @@ class FacilityPoint {
     this.stationName,
   });
 
+  /// 地图点位选中用的唯一键（避免多个点共用同一 FacilityID 时一起高亮）。
+  String get selectionKey {
+    final ipTrim = ip.trim();
+    if (ipTrim.isNotEmpty) return 'ip:$ipTrim';
+    final id = facilityId.trim();
+    if (id.isNotEmpty && id != '未知设备') {
+      return 'fid:$id@${x.toStringAsFixed(6)}@${y.toStringAsFixed(6)}';
+    }
+    return 'xy:${x.toStringAsFixed(6)}@${y.toStringAsFixed(6)}';
+  }
+
   factory FacilityPoint.fromBackend(
     Map<String, dynamic> json,
     double canvasWidth,
-    double canvasHeight,
-  ) {
+    double canvasHeight, {
+    DesignCoordinateMode coordinateMode = DesignCoordinateMode.pixel,
+  }) {
     final type = _facilityTypeFromString(
       json['FacilityType'] ?? json['facilityType'],
     );
@@ -50,8 +62,16 @@ class FacilityPoint {
     final rawX = _asDouble(json['X'] ?? json['x'], canvasWidth / 2);
     final rawY = _asDouble(json['Y'] ?? json['y'], canvasHeight / 2);
 
-    final relativeX = canvasWidth == 0 ? 0.5 : rawX / canvasWidth;
-    final relativeY = canvasHeight == 0 ? 0.5 : rawY / canvasHeight;
+    final relativeX = _normalizeDesignAxis(
+      rawX,
+      canvasWidth,
+      coordinateMode,
+    );
+    final relativeY = _normalizeDesignAxis(
+      rawY,
+      canvasHeight,
+      coordinateMode,
+    );
 
     final stationName = json['StationName']?.toString() ??
         json['stationName']?.toString() ??
@@ -110,6 +130,71 @@ double _asDouble(dynamic value, double fallback) {
   return fallback;
 }
 
+/// 设计页坐标常见三种：0~1 比例、0~100 百分比、画布像素。
+enum DesignCoordinateMode {
+  relative01,
+  percent100,
+  pixel,
+}
+
+double _normalizeDesignAxis(
+  double raw,
+  double canvasExtent,
+  DesignCoordinateMode mode,
+) {
+  switch (mode) {
+    case DesignCoordinateMode.relative01:
+      return FacilityPoint._clamp01(raw);
+    case DesignCoordinateMode.percent100:
+      return FacilityPoint._clamp01(raw / 100.0);
+    case DesignCoordinateMode.pixel:
+      if (canvasExtent <= 0) return 0.5;
+      return FacilityPoint._clamp01(raw / canvasExtent);
+  }
+}
+
+DesignCoordinateMode _detectDesignCoordinateMode(
+  List<dynamic> devicesJson,
+  double canvasWidth,
+  double canvasHeight,
+) {
+  var maxX = 0.0;
+  var maxY = 0.0;
+  var hasCoord = false;
+
+  for (final item in devicesJson) {
+    if (item is! Map) continue;
+    final map = item.cast<String, dynamic>();
+    if (!map.containsKey('X') &&
+        !map.containsKey('x') &&
+        !map.containsKey('Y') &&
+        !map.containsKey('y')) {
+      continue;
+    }
+    final x = _asDouble(map['X'] ?? map['x'], -1);
+    final y = _asDouble(map['Y'] ?? map['y'], -1);
+    if (x < 0 || y < 0) continue;
+    hasCoord = true;
+    maxX = math.max(maxX, x);
+    maxY = math.max(maxY, y);
+  }
+
+  if (!hasCoord) return DesignCoordinateMode.pixel;
+
+  // 与 demo 一致：设计页导出 0~1 时不再除以 CanvasSize
+  if (maxX <= 1.0 && maxY <= 1.0) {
+    return DesignCoordinateMode.relative01;
+  }
+  if (maxX <= 100.0 && maxY <= 100.0) {
+    return DesignCoordinateMode.percent100;
+  }
+  // 坐标大于画布尺寸时仍按像素处理
+  if (maxX > canvasWidth || maxY > canvasHeight) {
+    return DesignCoordinateMode.pixel;
+  }
+  return DesignCoordinateMode.pixel;
+}
+
 // 解码后端返回的 Base64 底图，容错常见格式问题
 Uint8List? _decodeBase64Image(dynamic raw) {
   if (raw == null) return null;
@@ -160,11 +245,17 @@ class FacilityRouteSettings {
         canvasSize.length > 1 ? _asDouble(canvasSize[1], 1080) : 1080.0;
 
     final facilitiesJson = json['Devices'] as List<dynamic>? ?? const [];
+    final coordinateMode =
+        _detectDesignCoordinateMode(facilitiesJson, canvasWidth, canvasHeight);
     final facilities = facilitiesJson
         .whereType<Map<String, dynamic>>()
         .map(
-          (deviceJson) =>
-              FacilityPoint.fromBackend(deviceJson, canvasWidth, canvasHeight),
+          (deviceJson) => FacilityPoint.fromBackend(
+            deviceJson,
+            canvasWidth,
+            canvasHeight,
+            coordinateMode: coordinateMode,
+          ),
         )
         .toList();
 
@@ -474,7 +565,7 @@ class DeviceMapWidget extends StatefulWidget {
   });
 
   final Function(String)? onCabinetTap; // 点击机柜/设备的回调
-  final String? selectedGateName; // 当前选中的设备/门名称
+  final String? selectedGateName; // 当前选中点位的 selectionKey（见 FacilityPoint.selectionKey）
   final FacilityRouteMap? routeMap; // 路由与点位数据
   final Map<String, String>? deviceStatusMap; // 设备状态映射：facilityId -> status (空闲/报到/工作/重报)
   final Map<String, bool>? port1030Map; // 设备是否 1030 端口：facilityId -> true/false
@@ -576,7 +667,8 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
                                 child: _buildFacilityMarker(
                                   context,
                                   point: f,
-                                  isSelected: widget.selectedGateName == f.facilityId,
+                                  isSelected:
+                                      widget.selectedGateName == f.selectionKey,
                                   status: status,
                                   isPort1030: isPort1030,
                                   isPort8084: isPort8084,
@@ -717,7 +809,7 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
       ..writeln('列席人数：${counts.guest}');
 
     return GestureDetector(
-      onTap: () => onTap?.call(point.facilityId),
+      onTap: () => onTap?.call(point.selectionKey),
       child: Tooltip(
         message: tooltipBuf.toString().trimRight(),
         child: AnimatedContainer(
