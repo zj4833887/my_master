@@ -21,7 +21,8 @@ class MixedFontText extends StatelessWidget {
     this.softWrap,
   });
 
-  static final RegExp _digitRegex = RegExp(r'\d+');
+  /// 连续数字及小数（如 `8.3`、`192.168`）使用 Times New Roman。
+  static final RegExp _digitRegex = RegExp(r'\d+(?:\.\d+)?');
 
   @override
   Widget build(BuildContext context) {

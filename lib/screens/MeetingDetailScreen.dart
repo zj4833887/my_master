@@ -49,6 +49,19 @@ const List<_ProgressStepInfo> _kDefaultProgressSteps = [
   _ProgressStepInfo(title: '上线部署', step: 5, executed: false),
 ];
 
+/// 报到情况网格项：同 GID 的多台设备合并为一格。
+class _AttendGridEntry {
+  const _AttendGridEntry(this.devices);
+
+  final List<Map<String, dynamic>> devices;
+
+  bool get isGidGroup {
+    if (devices.isEmpty) return false;
+    final gid = (devices.first['GID']?.toString() ?? '').trim();
+    return gid.isNotEmpty;
+  }
+}
+
 class MeetingDetailScreen extends StatefulWidget {
   final String meetingName;
   final String? meetId;
@@ -121,8 +134,6 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   List<Map<String, dynamic>> _devices = [];
   Map<String, int> _lastWsClientOrderByDevice = {};
   static const bool _kLogWsClientOrderDiff = false;
-  /// WS_Client 写入 txt 日志（`文档/my_master/ws_client_logs`）。
-  static const bool _kWsClientTxtLog = false;
 
   // 调试：打印设备排序（用于定位“乱跳”）
   static const bool _kLogDeviceOrder = false;
@@ -172,6 +183,14 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   /// 调试「出席/列席」人数：改为 true 后在 Debug 控制台输出 WS_StationNum 与匹配结果（使用 dart `developer.log`）
   static const bool _kLogStationNumAttend = false;
+
+  /// 调试会议管理按钮 vs 报到设备卡片状态不一致（Meetstatus / ClientStatus / 展示文案）。
+  /// 为 true 时：控制台 + `文档/my_master/meet_device_status_logs/*.txt`，并同步写入 WS_Client 原始 JSON。
+  static const bool _kLogMeetDeviceStatus = false;
+
+  int? _lastLogMeetStatus;
+  bool? _lastLogIsMeetingStarted;
+  String? _lastLogDeviceFingerprint;
 
   String get _defaultMeetingStatusText {
     switch (_meetStatus) {
@@ -595,8 +614,12 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           }).toList();
           
           // 生成设备列表用于显示
-          _updateDevicesList();
+          _updateDevicesList(logSource: 'queryClient(initial)');
         });
+        _logMeetDeviceStatusSnapshot(
+          'queryClient(initial)',
+          force: true,
+        );
       }
     } catch (e) {
       // 错误处理
@@ -686,30 +709,40 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     }
   }
 
-  /// WS_Client 日志目录：`文档/my_master/ws_client_logs`。
-  String _wsClientLogBaseDir() {
+  /// 调试 txt 根目录：`文档/my_master/`（Windows 为 `%USERPROFILE%\Documents\my_master`）。
+  String _debugLogBaseDir() {
     final home = Platform.environment['USERPROFILE'] ??
         Platform.environment['HOME'];
     if (home == null || home.isEmpty) {
       return Directory.systemTemp.path;
     }
-    return '$home${Platform.pathSeparator}Documents${Platform.pathSeparator}my_master${Platform.pathSeparator}ws_client_logs';
+    return '$home${Platform.pathSeparator}Documents${Platform.pathSeparator}my_master';
+  }
+
+  String _sanitizeMeetIdForLogFile() {
+    return (widget.meetId ?? 'unknown')
+        .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
+        .trim();
+  }
+
+  Future<File> _dailyDebugLogFile(String subDir, String namePrefix) async {
+    final dir = Directory(
+      '${_debugLogBaseDir()}${Platform.pathSeparator}$subDir',
+    );
+    if (!await dir.exists()) {
+      await dir.create(recursive: true);
+    }
+    final day = DateFormat('yyyyMMdd').format(DateTime.now());
+    final meetPart = _sanitizeMeetIdForLogFile();
+    return File(
+      '${dir.path}${Platform.pathSeparator}${namePrefix}_${meetPart}_$day.txt',
+    );
   }
 
   Future<void> _appendWsClientLog(Map<String, dynamic> payload) async {
-    if (!_kWsClientTxtLog) return;
+    if (!_kLogMeetDeviceStatus) return;
     try {
-      final dir = Directory(_wsClientLogBaseDir());
-      if (!await dir.exists()) {
-        await dir.create(recursive: true);
-      }
-      final day = DateFormat('yyyyMMdd').format(DateTime.now());
-      final meetPart = (widget.meetId ?? 'unknown')
-          .replaceAll(RegExp(r'[<>:"/\\|?*]'), '_')
-          .trim();
-      final file = File(
-        '${dir.path}${Platform.pathSeparator}ws_client_${meetPart}_$day.txt',
-      );
+      final file = await _dailyDebugLogFile('ws_client_logs', 'ws_client');
       final ts = DateFormat('yyyy-MM-dd HH:mm:ss.SSS').format(DateTime.now());
       final body = StringBuffer()
         ..writeln('[$ts] WS_Client')
@@ -732,11 +765,39 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     }
   }
 
+  Future<void> _appendMeetDeviceStatusTxtLog(
+    String source,
+    String body,
+  ) async {
+    if (!_kLogMeetDeviceStatus) return;
+    try {
+      final file =
+          await _dailyDebugLogFile('meet_device_status_logs', 'meet_device_status');
+      final ts = DateFormat('yyyy-MM-dd HH:mm:ss.SSS').format(DateTime.now());
+      final block = StringBuffer()
+        ..writeln('[$ts] [$source] MeetDeviceStatus')
+        ..writeln('会议: ${widget.meetingName} (${widget.meetId ?? ''})')
+        ..writeln(body)
+        ..writeln('');
+      await file.writeAsString(
+        block.toString(),
+        mode: FileMode.append,
+        encoding: utf8,
+        flush: true,
+      );
+    } catch (e) {
+      AppLog.d('MeetDeviceStatus txt 写入失败: $e', tag: 'MeetDeviceStatus');
+    }
+  }
+
   // 处理会议信息 (WS_MeetInfo / queryMeetInfo 等)
   void _handleMeetInfo(
     Map<String, dynamic> data, {
     String? meetInfoSource,
   }) {
+    final int meetStatusBefore = _meetStatus;
+    Map<String, dynamic>? meetInfoLogExtra;
+
     setState(() {
       // 获取嵌套的数据结构 data.data
       final dataData = data['data'] as Map<String, dynamic>?;
@@ -745,7 +806,14 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       if (dataData != null) {
         final serverStatus = dataData['serverStatus'] as Map<String, dynamic>?;
         if (serverStatus != null) {
-          _meetStatus = _parseInt(serverStatus['Meetstatus'] ?? 0);
+          final rawMeetStatus = serverStatus['Meetstatus'];
+          _meetStatus = _parseInt(rawMeetStatus ?? 0);
+          meetInfoLogExtra = {
+            'channel': meetInfoSource ?? 'MeetInfo',
+            'rawMeetstatus': rawMeetStatus,
+            'parsedMeetstatus': _meetStatus,
+            'meetStatusBefore': meetStatusBefore,
+          };
           
           // 根据会议状态更新标题显示和按钮状态
           switch (_meetStatus) {
@@ -778,12 +846,18 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         // 获取服务器连接状态
         final serverConnect = _parseInt(dataData['serverConnect'] ?? 0);
         if (serverConnect == 1) {
+          meetInfoLogExtra = {
+            ...(meetInfoLogExtra ?? {}),
+            'serverConnect': serverConnect,
+            'action': 'force all ClientStatus=4 (脱机)',
+            'clientCount': _clientList.length,
+          };
           // 如果服务器连接，更新所有客户端状态
           for (int i = 0; i < _clientList.length; i++) {
             _clientList[i]['PassDoorStatus'] = -2;
             _clientList[i]['ClientStatus'] = 4;
           }
-          _updateDevicesList();
+          _updateDevicesList(logSource: 'WS_MeetInfo/serverConnect');
         }
       }
 
@@ -862,6 +936,14 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       // 动态模板预览：仅在模板内容确实变化时更新，图片类标语会被冻结不更新
       _updateSloganPreviewIfNeeded();
     });
+
+    if (meetInfoLogExtra != null || meetStatusBefore != _meetStatus) {
+      _logMeetDeviceStatusSnapshot(
+        meetInfoSource ?? 'WS_MeetInfo',
+        extra: meetInfoLogExtra,
+        force: meetStatusBefore != _meetStatus,
+      );
+    }
   }
 
   // 处理报到信息 (WS_CheckInInfo)
@@ -894,7 +976,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       }
       
       // 更新设备列表
-      _updateDevicesList();
+      _updateDevicesList(logSource: 'WS_CheckInInfo');
     });
   }
 
@@ -904,7 +986,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     final list = data['data'];
     if (list is! List) return;
 
-    if (_kWsClientTxtLog) {
+    if (_kLogMeetDeviceStatus) {
       unawaited(_appendWsClientLog(Map<String, dynamic>.from(data)));
     }
 
@@ -923,7 +1005,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         return client;
       }).toList();
 
-      _updateDevicesList();
+      _updateDevicesList(logSource: 'WS_Client');
       
       // 如果正在轮询检查状态，更新检查结果
       if (_dataCheckTimer != null && _dataCheckTimer!.isActive) {
@@ -1038,12 +1120,12 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
     setState(() {
       _stationStats = stats;
-      _updateDevicesList();
+      _updateDevicesList(logSource: 'WS_StationNum');
     });
   }
 
   // 更新设备列表
-  void _updateDevicesList() {
+  void _updateDevicesList({String logSource = 'updateDevicesList'}) {
     final nextDevices = _clientList.map((client) {
       final processType = client['ProcessType'] ?? 'Server';
       final clientStatus = client['ClientStatus'] ?? 0;
@@ -1089,6 +1171,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         'IP': ip,
         'ClientStatus': clientStatus,
         'Order': order,
+        'GID': _gidFromClient(client),
       };
     }).toList();
 
@@ -1140,6 +1223,120 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     }
 
     _devices = nextDevices;
+    _logMeetDeviceStatusSnapshot(logSource);
+  }
+
+  /// 与 [_buildMeetingManagementContent] 一致的开始/结束按钮文案（仅用于日志）
+  String _meetingActionLabelForLog() {
+    if (_meetStatus == 2) {
+      return '已结束(可重新开始)';
+    }
+    if (_isMeetingStarted || _meetStatus == 1) {
+      return '结束';
+    }
+    return '开始';
+  }
+
+  void _logMeetDeviceStatusSnapshot(
+    String source, {
+    Map<String, dynamic>? extra,
+    bool force = false,
+  }) {
+    if (!_kLogMeetDeviceStatus) return;
+
+    final deviceFp = _devices
+        .map((d) {
+          final name = (d['name']?.toString() ?? '').trim();
+          final pt = d['ProcessType']?.toString() ?? '';
+          final cs = _parseInt(d['ClientStatus'] ?? 0);
+          final st = d['status']?.toString() ?? '';
+          return '$name|$pt|cs=$cs|$st';
+        })
+        .join(';');
+
+    if (!force &&
+        _lastLogMeetStatus == _meetStatus &&
+        _lastLogIsMeetingStarted == _isMeetingStarted &&
+        _lastLogDeviceFingerprint == deviceFp) {
+      return;
+    }
+
+    _lastLogMeetStatus = _meetStatus;
+    _lastLogIsMeetingStarted = _isMeetingStarted;
+    _lastLogDeviceFingerprint = deviceFp;
+
+    final notifyShown = _notificationText.trim().isNotEmpty
+        ? _notificationText.trim()
+        : _defaultMeetingStatusText;
+    final buttonLabel = _meetingActionLabelForLog();
+
+    final deviceLines = _devices
+        .map((d) {
+          final name = (d['name']?.toString() ?? '').trim();
+          final ip = (d['IP']?.toString() ?? '').trim();
+          final pt = d['ProcessType']?.toString() ?? '';
+          final cs = _parseInt(d['ClientStatus'] ?? 0);
+          final st = d['status']?.toString() ?? '';
+          final attend = d['attend'] ?? 0;
+          final guest = d['guest'] ?? 0;
+          return '  $name ip=$ip type=$pt ClientStatus=$cs =>「$st」 出席=$attend 列席=$guest';
+        })
+        .join('\n');
+
+    final clientLines = _clientList
+        .map((c) {
+          final name =
+              (c['StationName'] ?? c['Name'] ?? '').toString().trim();
+          final ip = (c['IP']?.toString() ?? '').trim();
+          final pt = c['ProcessType']?.toString() ?? '';
+          final cs = _parseInt(c['ClientStatus'] ?? 0);
+          final pass = c['PassDoorStatus'];
+          return '  [raw] $name ip=$ip type=$pt ClientStatus=$cs PassDoor=$pass';
+        })
+        .join('\n');
+
+    final meetInProgress = _meetStatus == 1 || _isMeetingStarted;
+    final idleRacks = _devices.where((d) {
+      final pt = d['ProcessType']?.toString() ?? '';
+      final st = d['status']?.toString() ?? '';
+      return meetInProgress &&
+          (pt == 'rack' || pt == 'didian') &&
+          (st == '空闲' || st == '联机');
+    }).toList();
+
+    final mismatchHint = meetInProgress && idleRacks.isNotEmpty
+        ? '⚠ 会议进行中，但以下报到设备仍为空闲/联机: ${idleRacks.map((d) => '${d['name']}(${d['status']})').join(', ')}'
+        : (!meetInProgress &&
+                _devices.any((d) =>
+                    (d['ProcessType'] == 'rack' || d['ProcessType'] == 'didian') &&
+                    (d['status'] == '工作' || d['status'] == '报到')))
+            ? '⚠ 会议未进行，但有报到设备处于工作/报到状态'
+            : '状态组合未见明显冲突';
+
+    final extraStr = extra == null || extra.isEmpty
+        ? ''
+        : '\nextra: ${jsonEncode(extra)}';
+
+    final logBody = StringBuffer()
+      ..writeln(
+        'meetStatus=$_meetStatus isMeetingStarted=$_isMeetingStarted '
+        'title=$_meetingTitle notify=「$notifyShown」 button=「$buttonLabel」',
+      )
+      ..writeln(mismatchHint)
+      ..writeln('devices(${_devices.length}):')
+      ..writeln(deviceLines)
+      ..writeln('clientList(${_clientList.length}):')
+      ..writeln(clientLines);
+    if (extraStr.isNotEmpty) {
+      logBody.write(extraStr);
+    }
+
+    final logText = logBody.toString();
+    developer.log(
+      '[$source] $logText',
+      name: 'MeetDeviceStatus',
+    );
+    unawaited(_appendMeetDeviceStatusTxtLog(source, logText));
   }
 
   // 根据 ClientStatus 获取状态文本
@@ -1189,6 +1386,52 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       default:
         return '空闲';
     }
+  }
+
+  /// WS_Client 分组 ID（主机/备机等同组）
+  String _gidFromClient(Map<String, dynamic> client) {
+    final raw = client['GID'] ?? client['Gid'] ?? client['gid'];
+    if (raw == null) return '';
+    return raw.toString().trim();
+  }
+
+  int _deviceOrderKey(Map<String, dynamic> device) =>
+      _parseInt(device['Order'] ?? 0);
+
+  /// 按 GID 合并网格项；无 GID 的设备仍单独占一格。
+  List<_AttendGridEntry> _buildAttendGridEntries(
+    List<Map<String, dynamic>> devices,
+  ) {
+    final Map<String, List<Map<String, dynamic>>> byGid = {};
+    final List<Map<String, dynamic>> singles = [];
+
+    for (final d in devices) {
+      final gid = (d['GID']?.toString() ?? '').trim();
+      if (gid.isNotEmpty) {
+        byGid.putIfAbsent(gid, () => []).add(d);
+      } else {
+        singles.add(d);
+      }
+    }
+
+    final entries = <_AttendGridEntry>[];
+    for (final group in byGid.values) {
+      group.sort(
+        (a, b) => _deviceOrderKey(a).compareTo(_deviceOrderKey(b)),
+      );
+      entries.add(_AttendGridEntry(group));
+    }
+    for (final d in singles) {
+      entries.add(_AttendGridEntry([d]));
+    }
+
+    int entrySortKey(_AttendGridEntry e) {
+      if (e.devices.isEmpty) return 0;
+      return e.devices.map(_deviceOrderKey).reduce(math.min);
+    }
+
+    entries.sort((a, b) => entrySortKey(a).compareTo(entrySortKey(b)));
+    return entries;
   }
 
   // 解析整数
@@ -1249,7 +1492,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       return;
     }
     setState(() {
-      _notificationHipcDetail = false;
+      _notificationHipcDetail = true;
       _notificationText = '正在获取设备信息...\nGET $hipcInfoUri';
     });
     AppLog.d('设备卡片点击: name=$name ip=$ip -> GET $hipcInfoUri', tag: 'HipcInfo');
@@ -1363,7 +1606,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         ? '主机'
         : modeLower == 'backup'
             ? '备机'
-            : mode;
+            : modeLower == 'standalone'
+                ? '单机模式'
+                : mode;
     // hdinfo：hostname/kernel/os/cpu/mem/disk 等（不展示 arch、boot）
     final hdinfoRaw = dataMap['hdinfo'];
     final hdinfoMap =
@@ -1415,6 +1660,11 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           _isMeetingStarted = true;
           _meetingTitle = '会议正在进行';
         });
+        _logMeetDeviceStatusSnapshot(
+          'startMeet(local)',
+          extra: {'api': 'startMeet', 'success': true},
+          force: true,
+        );
         _showMessage('会议开始成功');
       } else {
         _showMessage(result.msg.isNotEmpty ? result.msg : '会议开始失败', isError: true);
@@ -1477,6 +1727,11 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           _isMeetingStarted = false;
           _meetingTitle = '会议已经结束';
         });
+        _logMeetDeviceStatusSnapshot(
+          'endMeet(local)',
+          extra: {'api': 'endMeet', 'success': true},
+          force: true,
+        );
         _showMessage('会议结束成功');
       } else {
         _showMessage(result.msg.isNotEmpty ? result.msg : '会议结束失败', isError: true);
@@ -2862,135 +3117,228 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       },
     ] : _devices;
 
-    return GridView.builder(
-      padding: const EdgeInsets.all(10),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 8,
-        mainAxisSpacing: 10,
-        crossAxisSpacing: 10,
-        // 字号增大后需要更高的单元格，避免底部溢出
-        childAspectRatio: 0.74,
-      ),
-      itemCount: devices.length,
-      itemBuilder: (context, index) {
-        final device = devices[index];
-        final String processType = device['ProcessType'] as String;
-        final bool isRack = processType == 'rack';
-        final String status = device['status'] as String; // 先定义status变量
-        final String deviceIp = device['IP']?.toString() ?? '';
-        final bool isDidianLike = processType == 'didian' ||
-            deviceIp.contains(':1030') ||
-            deviceIp.endsWith('1030');
-        // 地垫（1030）：不提供 hipc 详情点击
-        final bool isTapDisabled =
-            status == '空闲' || status == '脱机' || isDidianLike;
-        // 状态背景色不同，因此文字也要随之调整可读性
-        // 其中“报到/重报”要求背景色与黑色文字
-        final Color textColor = status == '工作' || status == '报到' || status == '重报'
-            ? Colors.black
-            : Colors.white; // 然后使用它
-        return InkWell(
-          onTap: isTapDisabled ? null : () => _onAttendDeviceTap(device),
-          child: Container(
-            decoration: BoxDecoration(
-              color: isRack ? Colors.grey[200] : Colors.white,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.grey.shade300, width: 1),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black12,
-                  blurRadius: 1,
-                  offset: Offset(0, 2),
-                ),
-              ],
-            ),
-            child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+    final gridEntries = _buildAttendGridEntries(
+      devices.cast<Map<String, dynamic>>(),
+    );
+
+    const crossAxisCount = 8;
+    const spacing = 10.0;
+    const padding = 10.0;
+    const aspectRatio = 0.74;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final innerWidth = constraints.maxWidth - padding * 2;
+        final cellWidth =
+            (innerWidth - spacing * (crossAxisCount - 1)) / crossAxisCount;
+        final cellHeight = cellWidth / aspectRatio;
+
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(padding),
+          child: Wrap(
+            spacing: spacing,
+            runSpacing: spacing,
             children: [
-              // 状态指示器 - 使用图片展示
-              Container(
-                width: double.infinity,
-                height: 120,
-                decoration: BoxDecoration(
-                  image: DecorationImage(
-                    image: AssetImage(_getDeviceImage(processType)),
-                    fit: BoxFit.contain,
+              for (final entry in gridEntries)
+                if (entry.isGidGroup)
+                  SizedBox(
+                    width: cellWidth * entry.devices.length,
+                    height: cellHeight,
+                    child: _buildAttendGroupCard(
+                      entry.devices,
+                      height: cellHeight,
+                    ),
+                  )
+                else
+                  SizedBox(
+                    width: cellWidth,
+                    height: cellHeight,
+                    child: _buildAttendDeviceTile(entry.devices.first),
                   ),
-                  borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(8),
-                    topRight: Radius.circular(8),
-                  ),
-                ),
-                child: Center(
-                  child: Transform.translate(
-                    // 根据设备类型调整矩形框位置
-                    offset: _getStatusOffset(processType),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: _getStatusBackgroundColor(
-                          device['status'] as String,
-                        ),
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(
-                          color: Colors.white.withOpacity(0.5),
-                          width: 1.5,
-                        ),
-                      ),
-                      padding: _getStatusPadding(processType),
-                      child: Text(
-                        _getStatusDisplayText(
-                          device['status'] as String,
-                          processType, // 传入设备类型决定是否换行
-                        ),
-                        style: TextStyle(
-                          fontSize: _getStatusFontSize(processType),
-                          fontWeight: FontWeight.bold,
-                          color: textColor,
-                          fontFamily: 'Microsoft YaHei',
-                        ),
-                        textAlign: TextAlign.center,
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  /// 同 GID：共用一个外框，占两列宽；组内字号略小、名称单行。
+  Widget _buildAttendGroupCard(
+    List<Map<String, dynamic>> devices, {
+    required double height,
+  }) {
+    final bool isRack =
+        devices.isNotEmpty && devices.first['ProcessType'] == 'rack';
+    return Container(
+      height: height,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: isRack ? Colors.grey[200] : Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade300, width: 1),
+        boxShadow: const [
+          BoxShadow(
+            color: Colors.black12,
+            blurRadius: 1,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: Padding(
+        // 边框占 1px，内缩避免 RIGHT OVERFLOWED
+        padding: const EdgeInsets.symmetric(horizontal: 1),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            const gap = 1.0;
+            final n = devices.length;
+            final itemWidth =
+                (constraints.maxWidth - gap * (n > 1 ? n - 1 : 0)) / n;
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (int i = 0; i < n; i++) ...[
+                  if (i > 0) const SizedBox(width: gap),
+                  SizedBox(
+                    width: itemWidth,
+                    child: ClipRect(
+                      child: _buildAttendDeviceTile(
+                        devices[i],
+                        inGroup: true,
                       ),
                     ),
                   ),
-                ),
-              ),
+                ],
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
 
-              // 设备名称
-              Padding(
-                padding: EdgeInsets.all(3),
+  Widget _buildAttendDeviceTile(
+    Map<String, dynamic> device, {
+    bool inGroup = false,
+  }) {
+    final String processType = device['ProcessType'] as String;
+    final bool isRack = processType == 'rack';
+    final String status = device['status'] as String;
+    final String deviceIp = device['IP']?.toString() ?? '';
+    final bool isDidianLike = processType == 'didian' ||
+        deviceIp.contains(':1030') ||
+        deviceIp.endsWith('1030');
+    final bool isTapDisabled =
+        status == '空闲' || status == '脱机' || isDidianLike;
+    final Color textColor = status == '工作' || status == '报到' || status == '重报'
+        ? Colors.black
+        : Colors.white;
+
+    final double nameFontSize = inGroup ? 12 : 14;
+    final TextStyle countStyle = inGroup
+        ? _attendGuestCountTextStyle.copyWith(fontSize: 12)
+        : _attendGuestCountTextStyle;
+
+    final content = Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: double.infinity,
+          height: 120,
+          decoration: BoxDecoration(
+            image: DecorationImage(
+              image: AssetImage(_getDeviceImage(processType)),
+              fit: BoxFit.contain,
+            ),
+            borderRadius: inGroup
+                ? null
+                : const BorderRadius.only(
+                    topLeft: Radius.circular(8),
+                    topRight: Radius.circular(8),
+                  ),
+          ),
+          child: Center(
+            child: Transform.translate(
+              offset: _getStatusOffset(processType),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: _getStatusBackgroundColor(status),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(
+                    color: Colors.white.withOpacity(0.5),
+                    width: 1.5,
+                  ),
+                ),
+                padding: _getStatusPadding(processType, inGroup: inGroup),
                 child: Text(
-                  device['name'] as String,
+                  _getStatusDisplayText(status, processType),
                   style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
+                    fontSize: inGroup
+                        ? _getStatusFontSize(processType) - 1
+                        : _getStatusFontSize(processType),
+                    fontWeight: FontWeight.bold,
+                    color: textColor,
                     fontFamily: 'Microsoft YaHei',
                   ),
                   textAlign: TextAlign.center,
                 ),
               ),
-
-              // 人数信息（出席/列席统一字体与颜色）
-              Padding(
-                padding: EdgeInsets.all(0),
-                child: Column(
-                  children: [
-                    MixedFontText(
-                      '出席: ${device['attend']}',
-                      style: _attendGuestCountTextStyle,
-                    ),
-                    SizedBox(height: 2),
-                    MixedFontText(
-                      '列席: ${device['guest']}',
-                      style: _attendGuestCountTextStyle,
-                    ),
-                  ],
-                ),
-              ),
-            ],
             ),
           ),
-        );
-      },
+        ),
+        Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: inGroup ? 2 : 3,
+            vertical: inGroup ? 1 : 3,
+          ),
+          child: Text(
+            device['name'] as String,
+            style: TextStyle(
+              fontSize: nameFontSize,
+              fontWeight: FontWeight.w600,
+              fontFamily: 'Microsoft YaHei',
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+          ),
+        ),
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            MixedFontText(
+              '出席: ${device['attend']}',
+              style: countStyle,
+            ),
+            SizedBox(height: inGroup ? 1 : 2),
+            MixedFontText(
+              '列席: ${device['guest']}',
+              style: countStyle,
+            ),
+          ],
+        ),
+      ],
+    );
+
+    return InkWell(
+      onTap: isTapDisabled ? null : () => _onAttendDeviceTap(device),
+      child: inGroup
+          ? Center(child: content)
+          : Container(
+              decoration: BoxDecoration(
+                color: isRack ? Colors.grey[200] : Colors.white,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.grey.shade300, width: 1),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Colors.black12,
+                    blurRadius: 1,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: content,
+            ),
     );
   }
 
@@ -3022,7 +3370,19 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   }
 
   // 根据设备类型获取状态框内边距
-  EdgeInsets _getStatusPadding(String processType) {
+  EdgeInsets _getStatusPadding(String processType, {bool inGroup = false}) {
+    if (inGroup) {
+      switch (processType) {
+        case 'rack':
+          return const EdgeInsets.symmetric(horizontal: 4, vertical: 8);
+        case 'Client':
+          return const EdgeInsets.symmetric(horizontal: 8, vertical: 6);
+        case 'didian':
+          return const EdgeInsets.symmetric(horizontal: 12, vertical: 6);
+        default:
+          return const EdgeInsets.symmetric(horizontal: 4, vertical: 8);
+      }
+    }
     switch (processType) {
       case 'rack': // 会议厅设备
         return EdgeInsets.symmetric(horizontal: 6, vertical: 12);
