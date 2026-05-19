@@ -1069,12 +1069,10 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
           width: totalW,
           height: markerHeight,
           decoration: BoxDecoration(
-            color: Colors.white,
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: isSelected ? Colors.white : Colors.transparent,
-              width: isSelected ? 3 : 1.5,
-            ),
+            border: isSelected
+                ? Border.all(color: Colors.white, width: 3)
+                : null,
             boxShadow: isSelected
                 ? [
                     BoxShadow(
@@ -1085,11 +1083,9 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
                   ]
                 : null,
           ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
                 for (int i = 0; i < show.length; i++)
                   Positioned(
                     left: i * unitW * (1 - overlap),
@@ -1105,7 +1101,6 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
                   ),
               ],
             ),
-          ),
         ),
       ),
     );
@@ -1280,12 +1275,10 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
           width: effectiveWidth,
           height: effectiveHeight,
           decoration: BoxDecoration(
-            color: Colors.white,
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: isSelected ? Colors.white : Colors.transparent,
-              width: isSelected ? 3 : 1.5,
-            ),
+            border: isSelected
+                ? Border.all(color: Colors.white, width: 3)
+                : null,
             boxShadow: isSelected
                 ? [
                     BoxShadow(
@@ -1296,18 +1289,14 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
                   ]
                 : null,
           ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(8),
-            child: Image.asset(
-              statusImagePath ?? fallbackImage,
-              width: effectiveWidth,
-              height: effectiveHeight,
-              fit: BoxFit.contain,
-              errorBuilder: (context, error, stackTrace) {
-                // 如果图片加载失败，显示默认颜色圆圈
-                return _buildDefaultMarker(point, isSelected, effectiveHeight);
-              },
-            ),
+          child: Image.asset(
+            statusImagePath ?? fallbackImage,
+            width: effectiveWidth,
+            height: effectiveHeight,
+            fit: BoxFit.contain,
+            errorBuilder: (context, error, stackTrace) {
+              return _buildDefaultMarker(point, isSelected, effectiveHeight);
+            },
           ),
         ),
       ),
