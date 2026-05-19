@@ -49,11 +49,15 @@ const List<_ProgressStepInfo> _kDefaultProgressSteps = [
   _ProgressStepInfo(title: '上线部署', step: 5, executed: false),
 ];
 
-/// 报到情况网格项：同 GID 的多台设备合并为一格。
+/// 报到设备网格项：同 GID 的多台设备合并为一格。
 class _AttendGridEntry {
-  const _AttendGridEntry(this.devices);
+  const _AttendGridEntry(
+    this.devices, {
+    this.groupName = '',
+  });
 
   final List<Map<String, dynamic>> devices;
+  final String groupName;
 
   bool get isGidGroup {
     if (devices.isEmpty) return false;
@@ -147,7 +151,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     fontWeight: FontWeight.w500,
   );
 
-  /// 报到情况卡片：出席/列席人数统一样式。
+  /// 报到设备卡片：出席/列席人数统一样式。
   static const TextStyle _attendGuestCountTextStyle = TextStyle(
     fontSize: 14,
     fontWeight: FontWeight.w600,
@@ -181,12 +185,18 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   // 调试：输出 gRPC 推送原始数据（不受 AppLog.enabled 限制）
   static const bool _kLogGrpcPush = false;
 
+  /// 会议详情页调试日志总开关（控制台 developer.log + 文档/my_master 下 txt、logs.txt 等）
+  static const bool _kDebugLogsEnabled = false;
+
   /// 调试「出席/列席」人数：改为 true 后在 Debug 控制台输出 WS_StationNum 与匹配结果（使用 dart `developer.log`）
   static const bool _kLogStationNumAttend = false;
 
   /// 调试会议管理按钮 vs 报到设备卡片状态不一致（Meetstatus / ClientStatus / 展示文案）。
-  /// 为 true 时：控制台 + `文档/my_master/meet_device_status_logs/*.txt`，并同步写入 WS_Client 原始 JSON。
+  /// 需 [_kDebugLogsEnabled] 为 true 时才会输出。
   static const bool _kLogMeetDeviceStatus = false;
+
+  /// 设备点位图写入 txt；需 [_kDebugLogsEnabled] 为 true 时才会输出。
+  static const bool _kDeviceRouteMapTxtLog = false;
 
   int? _lastLogMeetStatus;
   bool? _lastLogIsMeetingStarted;
@@ -570,7 +580,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       final result =
           await SccClientWrapper.queryDeviceRouteMap(meetID: widget.meetId);
       if (result.isSuccess && result.data != null) {
-        _handleDeviceRouteData(result.data!);
+        _handleDeviceRouteData(
+          result.data!,
+          source: 'queryDeviceRouteMap',
+        );
       }
     } catch (_) {
       // 忽略接口异常，等待后续 WS 推送
@@ -632,7 +645,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       metricBoard: _metricBoard,
       onData: (Map<String, dynamic> data, String channel) {
         final remark = data['remark']?.toString() ?? '';
-        if (_kLogGrpcPush) {
+        if (_kDebugLogsEnabled && _kLogGrpcPush) {
           _logGrpcPushPayload(channel: channel, remark: remark, data: data);
         }
         final bool looksLikeMeetInfo = channel == 'WS_MeetInfo' ||
@@ -672,7 +685,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
               tag: 'DeviceRouteMap',
             );
             _logPayloadKeysBrief('DeviceRouteMap', channel, remark, data);
-            _handleDeviceRouteData(data);
+            _handleDeviceRouteData(data, source: channel);
           } else {
             // 忽略非 DeviceRouteMap 频道的“像点位图”的数据，避免闪烁
           }
@@ -699,6 +712,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   }
 
   Future<void> _appendWsMeetInfoNumsLog(Map<String, dynamic> nums) async {
+    if (!_kDebugLogsEnabled) return;
     try {
       final file = _meetInfoNumsLogFile();
       final line =
@@ -740,7 +754,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   }
 
   Future<void> _appendWsClientLog(Map<String, dynamic> payload) async {
-    if (!_kLogMeetDeviceStatus) return;
+    if (!_kDebugLogsEnabled || !_kLogMeetDeviceStatus) return;
     try {
       final file = await _dailyDebugLogFile('ws_client_logs', 'ws_client');
       final ts = DateFormat('yyyy-MM-dd HH:mm:ss.SSS').format(DateTime.now());
@@ -765,11 +779,183 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     }
   }
 
+  dynamic _sanitizeDeviceRoutePayloadForTxt(dynamic value, [String? keyHint]) {
+    if (value is Map) {
+      final out = <String, dynamic>{};
+      for (final entry in value.entries) {
+        final key = entry.key.toString();
+        final lower = key.toLowerCase();
+        final v = entry.value;
+        if (_isDeviceRouteOmitField(lower)) {
+          out[key] = _omitDeviceRouteFieldValue(v);
+          continue;
+        }
+        out[key] = _sanitizeDeviceRoutePayloadForTxt(v, key);
+      }
+      return out;
+    }
+    if (value is List) {
+      return value.map((e) => _sanitizeDeviceRoutePayloadForTxt(e, keyHint)).toList();
+    }
+    if (value is String) {
+      if (keyHint != null && _isDeviceRouteOmitField(keyHint.toLowerCase())) {
+        return _omitDeviceRouteFieldValue(value);
+      }
+      if (_looksLikeBase64Payload(value)) {
+        return '[omitted base64 len=${value.length}]';
+      }
+      if (value.length > 800) {
+        return '[string len=${value.length}]';
+      }
+    }
+    return value;
+  }
+
+  bool _isDeviceRouteOmitField(String lowerKey) {
+    if (lowerKey == 'bgpath' ||
+        lowerKey == 'bgimg' ||
+        lowerKey == 'bgrgb' ||
+        lowerKey == 'devicesimg') {
+      return true;
+    }
+    return lowerKey.contains('base64') ||
+        (lowerKey.contains('bg') &&
+            (lowerKey.contains('byte') ||
+                lowerKey.contains('image') ||
+                lowerKey.contains('data')));
+  }
+
+  String _omitDeviceRouteFieldValue(dynamic v) {
+    if (v == null) return '[omitted null]';
+    if (v is String) {
+      if (v.isEmpty) return '[omitted empty]';
+      return '[omitted len=${v.length}]';
+    }
+    if (v is List) return '[omitted list len=${v.length}]';
+    return '[omitted ${v.runtimeType}]';
+  }
+
+  bool _looksLikeBase64Payload(String value) {
+    final s = value.trim();
+    if (s.length < 80) return false;
+    if (s.startsWith('data:image')) return true;
+    if (s.startsWith('http')) return false;
+    return RegExp(r'^[A-Za-z0-9+/=\s_-]+$').hasMatch(s.substring(0, 80));
+  }
+
+  String _summarizeBgPathForLog(String path) {
+    final p = path.trim();
+    if (p.isEmpty) return '(empty)';
+    if (p.startsWith('http')) return p;
+    if (p.startsWith('assets/')) return p;
+    if (_looksLikeBase64Payload(p)) return '[base64 omitted len=${p.length}]';
+    if (p.length > 120) return '[string len=${p.length}]';
+    return p;
+  }
+
+  String _routeMapCoordinateAnchorName(FacilityRouteMap map) {
+    try {
+      return map.settings.coordinateAnchor.name;
+    } catch (_) {
+      return 'unknown';
+    }
+  }
+
+  String _routeMapCoordinateModeName(FacilityRouteMap map) {
+    try {
+      return map.settings.coordinateMode.name;
+    } catch (_) {
+      return 'unknown';
+    }
+  }
+
+  String _formatDeviceRouteMapSummary(FacilityRouteMap map) {
+    final buf = StringBuffer()
+      ..writeln('routeId=${map.routeId}')
+      ..writeln('meetId=${map.meetId}')
+      ..writeln('subMeetId=${map.subMeetId}')
+      ..writeln('imgName=${map.settings.imgName}')
+      ..writeln(
+        'canvas=${map.settings.canvasSize.width}x${map.settings.canvasSize.height} (设计单位，多为 mm)',
+      )
+      ..writeln('coordinateMode=${_routeMapCoordinateModeName(map)} anchor=${_routeMapCoordinateAnchorName(map)}')
+      ..writeln(
+        'bgPath=${_summarizeBgPathForLog(map.settings.bgPath)}',
+      )
+      ..writeln(
+        'bgBytes=${map.settings.bgBytes == null ? 'null' : 'len=${map.settings.bgBytes!.length}'}',
+      )
+      ..writeln('facilities=${map.settings.facilities.length}');
+    for (var i = 0; i < map.settings.facilities.length; i++) {
+      final f = map.settings.facilities[i];
+      final station =
+          f.stationName != null && f.stationName!.isNotEmpty
+              ? ' station=${f.stationName}'
+              : '';
+      final dw = f.layoutDesignWidthMm;
+      final dh = f.layoutDesignHeightMm;
+      final sizeMm = dw > 0 || dh > 0 ? ' sizeMm=${dw}x$dh' : '';
+      buf.writeln(
+        '  [$i] id=${f.facilityId} type=${f.facilityType.name} '
+        'raw=(${f.layoutRawX}, ${f.layoutRawY}) rel=(${f.layoutX.toStringAsFixed(4)}, ${f.layoutY.toStringAsFixed(4)})'
+        '$sizeMm ip=${f.ip}$station',
+      );
+    }
+    return buf.toString();
+  }
+
+  Future<void> _appendDeviceRouteMapTxtLog(
+    String source,
+    Map<String, dynamic> raw, {
+    FacilityRouteMap? parsed,
+    String? note,
+  }) async {
+    if (!_kDebugLogsEnabled || !_kDeviceRouteMapTxtLog) return;
+    try {
+      final file =
+          await _dailyDebugLogFile('device_route_map_logs', 'device_route_map');
+      final ts = DateFormat('yyyy-MM-dd HH:mm:ss.SSS').format(DateTime.now());
+      final payload =
+          raw['data'] is Map ? raw['data'] as Map<String, dynamic> : raw;
+      final sanitized = _sanitizeDeviceRoutePayloadForTxt(raw);
+      final body = StringBuffer()
+        ..writeln('[$ts] [$source] DeviceRouteMap')
+        ..writeln('会议: ${widget.meetingName} (${widget.meetId ?? ''})');
+      if (note != null && note.isNotEmpty) {
+        body.writeln('note: $note');
+      }
+      body
+        ..writeln('--- payload keys: ${payload.keys.join(', ')} ---')
+        ..writeln('--- 原始 JSON（大图/base64 已省略）---');
+      try {
+        body.writeln(
+          const JsonEncoder.withIndent('  ').convert(sanitized),
+        );
+      } catch (_) {
+        body.writeln(jsonEncode(sanitized));
+      }
+      if (parsed != null) {
+        body
+          ..writeln('--- 解析结果 ---')
+          ..writeln(_formatDeviceRouteMapSummary(parsed));
+      }
+      body.writeln('');
+      await file.writeAsString(
+        body.toString(),
+        mode: FileMode.append,
+        encoding: utf8,
+        flush: true,
+      );
+    } catch (e) {
+      AppLog.d('DeviceRouteMap txt 写入失败: $e', tag: 'DeviceRouteMap');
+    }
+  }
+
   Future<void> _appendMeetDeviceStatusTxtLog(
     String source,
     String body,
   ) async {
-    if (!_kLogMeetDeviceStatus) return;
+    if (!_kDebugLogsEnabled || !_kLogMeetDeviceStatus) return;
     try {
       final file =
           await _dailyDebugLogFile('meet_device_status_logs', 'meet_device_status');
@@ -986,7 +1172,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     final list = data['data'];
     if (list is! List) return;
 
-    if (_kLogMeetDeviceStatus) {
+    if (_kDebugLogsEnabled && _kLogMeetDeviceStatus) {
       unawaited(_appendWsClientLog(Map<String, dynamic>.from(data)));
     }
 
@@ -1015,7 +1201,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   }
 
   void _logWsClientOrderDiffIfChanged(List<dynamic> list) {
-    if (!_kLogWsClientOrderDiff) {
+    if (!_kDebugLogsEnabled || !_kLogWsClientOrderDiff) {
       return;
     }
     final current = <String, int>{};
@@ -1108,7 +1294,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
     if (stats.isEmpty) return;
 
-    if (_kLogStationNumAttend) {
+    if (_kDebugLogsEnabled && _kLogStationNumAttend) {
       final keys = stats.keys.toList();
       final sample = list.take(5).map((e) => e.toString()).join(' | ');
       developer.log(
@@ -1172,6 +1358,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         'ClientStatus': clientStatus,
         'Order': order,
         'GID': _gidFromClient(client),
+        'groupName': _groupNameFromClient(client),
+        'isActive': _isActiveFromClient(client),
+        'isMaster': _masterRoleFromClient(client),
       };
     }).toList();
 
@@ -1194,7 +1383,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       return cmpStr(nodeKey(a), nodeKey(b));
     });
 
-    if (_kLogDeviceOrder) {
+    if (_kDebugLogsEnabled && _kLogDeviceOrder) {
       final brief = nextDevices.map((d) {
         final n = nameKey(d);
         final ip = ipKey(d);
@@ -1205,7 +1394,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       AppLog.d('Attend devices order: $brief', tag: 'AttendDevices');
     }
 
-    if (_kLogStationNumAttend) {
+    if (_kDebugLogsEnabled && _kLogStationNumAttend) {
       final statN = _stationStats.length;
       final keysBrief =
           _stationStats.keys.take(10).join(',') + (statN > 10 ? '...' : '');
@@ -1242,7 +1431,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     Map<String, dynamic>? extra,
     bool force = false,
   }) {
-    if (!_kLogMeetDeviceStatus) return;
+    if (!_kDebugLogsEnabled || !_kLogMeetDeviceStatus) return;
 
     final deviceFp = _devices
         .map((d) {
@@ -1395,6 +1584,177 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return raw.toString().trim();
   }
 
+  String _groupNameFromClient(Map<String, dynamic> client) {
+    for (final key in [
+      'GName',
+      'GroupName',
+      'GIDName',
+      'GN',
+      'GroupTitle',
+      'gname',
+    ]) {
+      final v = client[key]?.toString().trim();
+      if (v != null && v.isNotEmpty) return v;
+    }
+    return '';
+  }
+
+  bool _isTruthyDynamic(dynamic value) {
+    if (value == null) return false;
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    final s = value.toString().trim().toLowerCase();
+    return s == '1' || s == 'true' || s == 'yes';
+  }
+
+  bool _isActiveFromClient(Map<String, dynamic> client) {
+    final raw = client['Active'] ??
+        client['IsActive'] ??
+        client['active'] ??
+        client['isActive'];
+    return _isTruthyDynamic(raw);
+  }
+
+  /// `true`=主、`false`=备、`null`=待组内推断
+  bool? _masterRoleFromClient(Map<String, dynamic> client) {
+    if (_isActiveFromClient(client)) return true;
+
+    for (final key in ['IsMaster', 'Master', 'IsMain', 'Main', 'isMaster']) {
+      final v = client[key];
+      if (v == null) continue;
+      if (v is bool) return v;
+      if (_isTruthyDynamic(v)) return true;
+      final s = v.toString().trim().toLowerCase();
+      if (s == '0' ||
+          s == 'false' ||
+          s == 'backup' ||
+          s == 'slave' ||
+          s == '备') {
+        return false;
+      }
+    }
+
+    final role = client['Role'] ??
+        client['DeviceRole'] ??
+        client['ClientRole'] ??
+        client['role'];
+    if (role != null) {
+      final s = role.toString();
+      if (s.contains('备') || s.toLowerCase().contains('backup')) {
+        return false;
+      }
+      if (s.contains('主') ||
+          s.toLowerCase().contains('master') ||
+          s.toLowerCase() == 'main') {
+        return true;
+      }
+    }
+
+    final name = (client['StationName'] ?? client['Name'] ?? '').toString();
+    if (name.contains('备')) return false;
+    if (name.contains('主')) return true;
+    return null;
+  }
+
+  void _resolveGroupMasterRoles(List<Map<String, dynamic>> group) {
+    if (group.isEmpty) return;
+
+    final actives =
+        group.where((d) => d['isActive'] == true).toList(growable: false);
+    if (actives.length == 1) {
+      for (final d in group) {
+        d['isMaster'] = d['isActive'] == true;
+      }
+      return;
+    }
+
+    final explicitMasters = group.where((d) => d['isMaster'] == true).toList();
+    if (explicitMasters.length == 1) {
+      for (final d in group) {
+        d['isMaster'] = identical(d, explicitMasters.first);
+      }
+      return;
+    }
+
+    for (final d in group) {
+      if (d['isMaster'] != null) continue;
+      final name = d['name']?.toString() ?? '';
+      if (name.contains('备')) {
+        d['isMaster'] = false;
+      } else if (name.contains('主')) {
+        d['isMaster'] = true;
+      }
+    }
+
+    if (group.every((d) => d['isMaster'] == null)) {
+      final sorted = List<Map<String, dynamic>>.from(group)
+        ..sort((a, b) => _deviceOrderKey(a).compareTo(_deviceOrderKey(b)));
+      sorted.first['isMaster'] = true;
+      for (var i = 1; i < sorted.length; i++) {
+        sorted[i]['isMaster'] = false;
+      }
+    } else {
+      for (final d in group) {
+        d['isMaster'] ??= false;
+      }
+    }
+  }
+
+  void _sortGroupDevicesMasterLeft(List<Map<String, dynamic>> group) {
+    _resolveGroupMasterRoles(group);
+    group.sort((a, b) {
+      final am = a['isMaster'] == true;
+      final bm = b['isMaster'] == true;
+      if (am != bm) return am ? -1 : 1;
+      return _deviceOrderKey(a).compareTo(_deviceOrderKey(b));
+    });
+  }
+
+  String _groupNameForDevices(List<Map<String, dynamic>> group) {
+    for (final d in group) {
+      final name = (d['groupName']?.toString() ?? '').trim();
+      if (name.isNotEmpty) return name;
+    }
+    return '';
+  }
+
+  Map<String, dynamic>? _masterDeviceInGroup(List<Map<String, dynamic>> devices) {
+    for (final d in devices) {
+      if (d['isMaster'] == true) return d;
+    }
+    return devices.isNotEmpty ? devices.first : null;
+  }
+
+  String? _deviceRoleBadge(
+    Map<String, dynamic> device, {
+    bool inGroup = false,
+  }) {
+    if (!inGroup && device['status']?.toString() != '联机') return null;
+    if (device['isMaster'] == true) return '主';
+    if (device['isMaster'] == false) return '备';
+    if (device['isActive'] == true) return '主';
+    final name = device['name']?.toString() ?? '';
+    if (name.contains('备')) return '备';
+    if (name.contains('主')) return '主';
+    return null;
+  }
+
+  /// 主/备标注在机柜银色底座区域（距图标底边）。
+  double _roleBadgeBottomForProcessType(
+    String processType, {
+    bool inGroup = false,
+  }) {
+    switch (processType) {
+      case 'Client':
+        return inGroup ? 10 : 12;
+      case 'didian':
+        return inGroup ? 6 : 8;
+      case 'rack':
+      default:
+        return inGroup ? 22 : 16;
+    }
+  }
+
   int _deviceOrderKey(Map<String, dynamic> device) =>
       _parseInt(device['Order'] ?? 0);
 
@@ -1416,10 +1776,13 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
     final entries = <_AttendGridEntry>[];
     for (final group in byGid.values) {
-      group.sort(
-        (a, b) => _deviceOrderKey(a).compareTo(_deviceOrderKey(b)),
+      _sortGroupDevicesMasterLeft(group);
+      entries.add(
+        _AttendGridEntry(
+          group,
+          groupName: _groupNameForDevices(group),
+        ),
       );
-      entries.add(_AttendGridEntry(group));
     }
     for (final d in singles) {
       entries.add(_AttendGridEntry([d]));
@@ -1540,7 +1903,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       final bodyBytes = await response.transform(utf8.decoder).toList();
       final bodyStr = bodyBytes.join();
       AppLog.d('hipc/info 原始响应:\n$bodyStr', tag: 'HipcInfo');
-      developer.log(bodyStr, name: 'HipcInfo');
+      if (_kDebugLogsEnabled) {
+        developer.log(bodyStr, name: 'HipcInfo');
+      }
       final decoded = jsonDecode(bodyStr);
       if (decoded is Map<String, dynamic>) {
         return (body: decoded, raw: bodyStr);
@@ -2599,36 +2964,55 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     );
   }
 
-  void _handleDeviceRouteData(Map<String, dynamic> data) {
+  void _handleDeviceRouteData(
+    Map<String, dynamic> data, {
+    String source = 'DeviceRouteMap',
+  }) {
     final payload =
         data['data'] is Map ? data['data'] as Map<String, dynamic> : data;
+    FacilityRouteMap? parsed;
+    String? logNote;
     try {
       // 仅输出字段名，避免大数据刷屏
       _debugPrintPayloadKeys(payload);
-      final routeMap = FacilityRouteMap.fromPayload(payload);
+      parsed = FacilityRouteMap.fromPayload(payload);
       // 如果内容与当前一致，直接返回，避免闪烁
       final currentRouteMap = _routeMapNotifier.value;
       if (currentRouteMap != null &&
-          _isSameRouteMap(routeMap, currentRouteMap)) {
+          _isSameRouteMap(parsed, currentRouteMap)) {
         AppLog.d('skip refresh: identical to current', tag: 'DeviceRouteMap');
+        logNote = 'skip: identical to current';
         return;
       }
 
       // 计算签名，仅包含影响渲染的关键信息，避免相同数据反复刷新
-      final newSig = _computeRouteMapSignature(routeMap);
+      final newSig = _computeRouteMapSignature(parsed);
       if (newSig != null && newSig == _lastRouteMapSignature) {
         AppLog.d('skip refresh: same signature', tag: 'DeviceRouteMap');
+        logNote = 'skip: same signature';
         return;
       }
 
       AppLog.d(
-        'parsed routeId=${routeMap.routeId} meetId=${routeMap.meetId} facilities=${routeMap.settings.facilities.length}',
+        'parsed routeId=${parsed.routeId} meetId=${parsed.meetId} facilities=${parsed.settings.facilities.length}',
         tag: 'DeviceRouteMap',
       );
-      _routeMapNotifier.value = routeMap;
+      _routeMapNotifier.value = parsed;
       _lastRouteMapSignature = newSig;
+      logNote = 'applied';
     } catch (e) {
-      // 解析失败时忽略
+      logNote = 'parse error: $e';
+    } finally {
+      if (_kDebugLogsEnabled && _kDeviceRouteMapTxtLog) {
+        unawaited(
+          _appendDeviceRouteMapTxtLog(
+            source,
+            data,
+            parsed: parsed,
+            note: logNote,
+          ),
+        );
+      }
     }
   }
 
@@ -2736,8 +3120,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         .map((f) => {
               'id': f.facilityId,
               't': f.facilityType.name,
-              'x': _round6(f.x),
-              'y': _round6(f.y),
+              'x': _round6(f.layoutX),
+              'y': _round6(f.layoutY),
               'ip': f.ip,
               'cam': f.cameraUri,
             })
@@ -2897,28 +3281,35 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     final Map<String, bool> port1030Map = {};
     final Map<String, bool> port8084Map = {};
     final Map<String, String> facilityNameMap = {};
+    final Map<String, String> deviceGidMap = {};
+    final Map<String, bool> deviceIsMasterMap = {};
     for (var device in _devices) {
       final deviceName = device['name']?.toString() ?? '';
       final deviceStatus = device['status']?.toString() ?? '';
       final nodeId = device['NodeID'];
       final facilityId = device['FacilityID'];
       final ip = device['IP']?.toString();
+      final gid = (device['GID']?.toString() ?? '').trim();
+      final isMaster = device['isMaster'] == true;
 
       final bool isPort1030 = ip != null && ip.trim().endsWith(':1030');
       final bool isPort8084 = ip != null && ip.trim().endsWith(':8084');
 
+      void putDeviceKeys(void Function(String key) put) {
+        if (deviceName.isNotEmpty) put(deviceName);
+        if (nodeId != null) put(nodeId.toString());
+        if (facilityId != null) put(facilityId.toString());
+        if (ip != null && ip.isNotEmpty) put(ip);
+      }
+
       if (deviceName.isNotEmpty) {
-        facilityNameMap[deviceName] = deviceName;
+        putDeviceKeys((key) => facilityNameMap[key] = deviceName);
       }
-      if (nodeId != null && deviceName.isNotEmpty) {
-        facilityNameMap[nodeId.toString()] = deviceName;
+
+      if (gid.isNotEmpty) {
+        putDeviceKeys((key) => deviceGidMap[key] = gid);
       }
-      if (facilityId != null && deviceName.isNotEmpty) {
-        facilityNameMap[facilityId.toString()] = deviceName;
-      }
-      if (ip != null && ip.isNotEmpty && deviceName.isNotEmpty) {
-        facilityNameMap[ip] = deviceName;
-      }
+      putDeviceKeys((key) => deviceIsMasterMap[key] = isMaster);
 
       if (deviceName.isNotEmpty && deviceStatus.isNotEmpty) {
         deviceStatusMap[deviceName] = deviceStatus;
@@ -2955,6 +3346,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
               port8084Map: port8084Map,
               port1030Map: port1030Map,
               facilityNameMap: facilityNameMap,
+              deviceGidMap: deviceGidMap,
+              deviceIsMasterMap: deviceIsMasterMap,
               stationStats: _stationStats,
               onCabinetTap: (selectionKey) {
                 _selectedFacilityIdNotifier.value = selectionKey;
@@ -3140,13 +3533,14 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
             runSpacing: spacing,
             children: [
               for (final entry in gridEntries)
-                if (entry.isGidGroup)
+                if (entry.isGidGroup && entry.devices.length > 1)
                   SizedBox(
-                    width: cellWidth * entry.devices.length,
+                    width: cellWidth,
                     height: cellHeight,
                     child: _buildAttendGroupCard(
                       entry.devices,
                       height: cellHeight,
+                      groupName: entry.groupName,
                     ),
                   )
                 else
@@ -3162,13 +3556,22 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     );
   }
 
-  /// 同 GID：共用一个外框，占两列宽；组内字号略小、名称单行。
+  /// 同 GID：与单卡同宽；主左备右并排；组底统一显示主机名称与出席/列席。
   Widget _buildAttendGroupCard(
     List<Map<String, dynamic>> devices, {
     required double height,
+    String groupName = '',
   }) {
     final bool isRack =
         devices.isNotEmpty && devices.first['ProcessType'] == 'rack';
+    final master = _masterDeviceInGroup(devices);
+    final masterName = master?['name']?.toString() ?? '';
+    final displayName = masterName.isNotEmpty
+        ? masterName
+        : (groupName.trim().isNotEmpty ? groupName.trim() : '');
+    final attend = master?['attend'] ?? 0;
+    final guest = master?['guest'] ?? 0;
+
     return Container(
       height: height,
       clipBehavior: Clip.antiAlias,
@@ -3184,34 +3587,64 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           ),
         ],
       ),
-      child: Padding(
-        // 边框占 1px，内缩避免 RIGHT OVERFLOWED
-        padding: const EdgeInsets.symmetric(horizontal: 1),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            const gap = 1.0;
-            final n = devices.length;
-            final itemWidth =
-                (constraints.maxWidth - gap * (n > 1 ? n - 1 : 0)) / n;
-            return Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                for (int i = 0; i < n; i++) ...[
-                  if (i > 0) const SizedBox(width: gap),
-                  SizedBox(
-                    width: itemWidth,
+                for (int i = 0; i < devices.length; i++)
+                  Expanded(
                     child: ClipRect(
                       child: _buildAttendDeviceTile(
                         devices[i],
                         inGroup: true,
+                        showNameAndCounts: false,
+                        roleBadgeOverride: devices[i]['isMaster'] == true
+                            ? '主'
+                            : (devices[i]['isMaster'] == false
+                                ? '备'
+                                : (i == 0 ? '主' : '备')),
                       ),
                     ),
                   ),
-                ],
               ],
-            );
-          },
-        ),
+            ),
+          ),
+          if (displayName.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 0, 4, 0),
+              child: Text(
+                displayName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'Microsoft YaHei',
+                ),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4, top: 1),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                MixedFontText(
+                  '出席: $attend',
+                  style: _attendGuestCountTextStyle.copyWith(fontSize: 12),
+                ),
+                const SizedBox(height: 1),
+                MixedFontText(
+                  '列席: $guest',
+                  style: _attendGuestCountTextStyle.copyWith(fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -3219,6 +3652,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   Widget _buildAttendDeviceTile(
     Map<String, dynamic> device, {
     bool inGroup = false,
+    bool showNameAndCounts = true,
+    String? roleBadgeOverride,
   }) {
     final String processType = device['ProcessType'] as String;
     final bool isRack = processType == 'rack';
@@ -3237,6 +3672,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     final TextStyle countStyle = inGroup
         ? _attendGuestCountTextStyle.copyWith(fontSize: 12)
         : _attendGuestCountTextStyle;
+    // 组内始终标注主/备；单机联机时在银色区域标注
+    final String? roleBadge =
+        roleBadgeOverride ?? _deviceRoleBadge(device, inGroup: inGroup);
 
     final content = Column(
       mainAxisAlignment: MainAxisAlignment.center,
@@ -3257,66 +3695,99 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                     topRight: Radius.circular(8),
                   ),
           ),
-          child: Center(
-            child: Transform.translate(
-              offset: _getStatusOffset(processType),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: _getStatusBackgroundColor(status),
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(
-                    color: Colors.white.withOpacity(0.5),
-                    width: 1.5,
+          child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.center,
+            children: [
+              Transform.translate(
+                offset: _getStatusOffset(processType),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: _getStatusBackgroundColor(status),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(
+                      color: Colors.white.withOpacity(0.5),
+                      width: 1.5,
+                    ),
                   ),
-                ),
-                padding: _getStatusPadding(processType, inGroup: inGroup),
-                child: Text(
-                  _getStatusDisplayText(status, processType),
-                  style: TextStyle(
-                    fontSize: inGroup
-                        ? _getStatusFontSize(processType) - 1
-                        : _getStatusFontSize(processType),
-                    fontWeight: FontWeight.bold,
-                    color: textColor,
-                    fontFamily: 'Microsoft YaHei',
+                  padding: _getStatusPadding(processType, inGroup: inGroup),
+                  child: Text(
+                    _getStatusDisplayText(status, processType),
+                    style: TextStyle(
+                      fontSize: inGroup
+                          ? _getStatusFontSize(processType) - 1
+                          : _getStatusFontSize(processType),
+                      fontWeight: FontWeight.bold,
+                      color: textColor,
+                      fontFamily: 'Microsoft YaHei',
+                    ),
+                    textAlign: TextAlign.center,
                   ),
-                  textAlign: TextAlign.center,
                 ),
               ),
-            ),
+              if (roleBadge != null)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: _roleBadgeBottomForProcessType(
+                    processType,
+                    inGroup: inGroup,
+                  ),
+                  child: Text(
+                    roleBadge,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: inGroup ? 11 : 13,
+                      fontWeight: FontWeight.bold,
+                      fontFamily: 'Microsoft YaHei',
+                      color: const Color(0xFF616161),
+                      height: 1.0,
+                      letterSpacing: 1,
+                      shadows: const [
+                        Shadow(
+                          color: Colors.white,
+                          blurRadius: 3,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
           ),
         ),
-        Padding(
-          padding: EdgeInsets.symmetric(
-            horizontal: inGroup ? 2 : 3,
-            vertical: inGroup ? 1 : 3,
+        if (showNameAndCounts) ...[
+          Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: inGroup ? 2 : 3,
+              vertical: inGroup ? 1 : 3,
+            ),
+            child: Text(
+              device['name'] as String,
+              style: TextStyle(
+                fontSize: nameFontSize,
+                fontWeight: FontWeight.w600,
+                fontFamily: 'Microsoft YaHei',
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.center,
+            ),
           ),
-          child: Text(
-            device['name'] as String,
-            style: TextStyle(
-              fontSize: nameFontSize,
-              fontWeight: FontWeight.w600,
-              fontFamily: 'Microsoft YaHei',
-            ),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              MixedFontText(
+                '出席: ${device['attend']}',
+                style: countStyle,
+              ),
+              SizedBox(height: inGroup ? 1 : 2),
+              MixedFontText(
+                '列席: ${device['guest']}',
+                style: countStyle,
+              ),
+            ],
           ),
-        ),
-        Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            MixedFontText(
-              '出席: ${device['attend']}',
-              style: countStyle,
-            ),
-            SizedBox(height: inGroup ? 1 : 2),
-            MixedFontText(
-              '列席: ${device['guest']}',
-              style: countStyle,
-            ),
-          ],
-        ),
+        ],
       ],
     );
 
@@ -4921,7 +5392,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                       tabs: [
                                         Tab(
                                           child: Text(
-                                            '报到情况',
+                                            '报到设备',
                                             style: TextStyle(fontFamily: 'Microsoft YaHei'),
                                           ),
                                         ),
