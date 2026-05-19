@@ -1057,7 +1057,6 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     final masterCounts = _resolveAttendGuest(anchor);
     final tooltipBuf = StringBuffer()
       ..writeln('设备名称：$displayName')
-      ..writeln('分组：${show.length} 台（GID）')
       ..writeln('出席人数：${masterCounts.attend}')
       ..writeln('列席人数：${masterCounts.guest}');
 
