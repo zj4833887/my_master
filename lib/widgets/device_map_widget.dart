@@ -4,8 +4,6 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
-import '../utils/station_stat_lookup.dart';
-
 /// 设备类型，用于控制颜色与图例
 enum FacilityType {
   cabinet, // 报到机柜
@@ -424,9 +422,7 @@ class FacilityRouteSettings {
       canvasSize: Size(canvasWidth, canvasHeight),
       bgPath: resolvedBgPath,
       bgBytes: bgBytes,
-      facilities: facilities.isEmpty
-          ? FacilityRouteMap.demo().settings.facilities
-          : facilities,
+      facilities: facilities,
       coordinateMode: coordinateMode,
       coordinateAnchor: coordinateAnchor,
     );
@@ -674,7 +670,17 @@ class FacilityRouteMap {
     }
 
     if (selected == null || selected.isEmpty) {
-      return FacilityRouteMap.demo();
+      return FacilityRouteMap(
+        routeId: routeId,
+        meetId: meetId,
+        subMeetId: subMeetId,
+        settings: FacilityRouteSettings(
+          imgName: json['ImgName']?.toString() ?? '',
+          canvasSize: const Size(1250, 650),
+          bgPath: '',
+          facilities: const [],
+        ),
+      );
     }
 
     return FacilityRouteMap(
@@ -733,6 +739,7 @@ class DeviceMapWidget extends StatefulWidget {
     this.facilityNameMap, // 设备显示名称：与 deviceStatusMap 相同的 key（FacilityID/IP/名称等）-> 名称
     this.deviceGidMap, // 设备 GID：key 与 deviceStatusMap 一致
     this.deviceIsMasterMap, // 是否主机：key 与 deviceStatusMap 一致
+    this.gidMembersByGid, // 同 GID 的 WS 设备；设计图仅 1 个点时仍可画主备
     this.stationStats, // 站点人数：Station -> { attend, guest }（与 WS_StationNum 一致，查找见 lookupStationStatRow）
   });
 
@@ -745,23 +752,41 @@ class DeviceMapWidget extends StatefulWidget {
   final Map<String, String>? facilityNameMap;
   final Map<String, String>? deviceGidMap;
   final Map<String, bool>? deviceIsMasterMap;
+  final Map<String, List<GidMapMemberInfo>>? gidMembersByGid;
   final Map<String, Map<String, int>>? stationStats;
 
   @override
   State<DeviceMapWidget> createState() => _DeviceMapWidgetState();
 }
 
+/// 同 GID 在 WS_Client 中的一台设备（状态查找 key + 主备）
+class GidMapMemberInfo {
+  const GidMapMemberInfo({
+    required this.statusLookupKey,
+    this.isMaster,
+  });
+
+  final String statusLookupKey;
+  final bool? isMaster;
+}
+
 /// 点位图层项：单点或同 GID 合并
 class _MapMarkerLayerItem {
   const _MapMarkerLayerItem.single(this.point)
       : points = const [],
-        gid = '';
+        gid = '',
+        members = const [];
 
-  const _MapMarkerLayerItem.group(this.points, this.gid) : point = null;
+  const _MapMarkerLayerItem.group(
+    this.points,
+    this.gid, {
+    this.members = const [],
+  }) : point = null;
 
   final FacilityPoint? point;
   final List<FacilityPoint> points;
   final String gid;
+  final List<GidMapMemberInfo> members;
 
   bool get isGroup => points.length > 1;
   FacilityPoint get anchorPoint =>
@@ -771,9 +796,6 @@ class _MapMarkerLayerItem {
 class _DeviceMapWidgetState extends State<DeviceMapWidget> {
   ImageProvider<Object>? _cachedBgImage;
   FacilityRouteSettings? _cachedSettings;
-
-  FacilityRouteMap get _effectiveRouteMap =>
-      widget.routeMap ?? FacilityRouteMap.demo();
 
   ImageProvider<Object> _getOrBuildBgImage(FacilityRouteSettings settings) {
     // 如果 settings 没变，直接返回缓存的 ImageProvider
@@ -796,6 +818,15 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
 
   @override
   Widget build(BuildContext context) {
+    final routeMap = widget.routeMap;
+    if (routeMap == null) {
+      return const SizedBox(
+        width: 1250,
+        height: 630,
+        child: ColoredBox(color: Color(0xFFF5F5F5)),
+      );
+    }
+
     return Container(
       padding: EdgeInsets.zero,
       child: Column(
@@ -807,10 +838,8 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
             height: 630,
             child: LayoutBuilder(
               builder: (context, constraints) {
-                final settings = _effectiveRouteMap.settings;
-                final facilities = settings.facilities.isEmpty
-                    ? FacilityRouteMap.demo().settings.facilities
-                    : settings.facilities;
+                final settings = routeMap.settings;
+                final facilities = settings.facilities;
 
                 // 固定为 1250x650，若外部约束更小则按可用空间等比缩放
                 final targetWidth = 1250.0;
@@ -842,6 +871,7 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
                         width: renderWidth,
                         height: renderHeight,
                         child: Stack(
+                          clipBehavior: Clip.none,
                           children: [
                             Positioned.fill(
                               child: Container(
@@ -888,13 +918,6 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
                                       ? renderHeight * layoutY -
                                           markerHeight / 2
                                       : renderHeight * layoutY;
-                              final isSelected = item.isGroup
-                                  ? item.points.any((p) =>
-                                      widget.selectedGateName ==
-                                      p.selectionKey)
-                                  : widget.selectedGateName ==
-                                      anchor.selectionKey;
-
                               return Positioned(
                                 left: left,
                                 top: top,
@@ -902,7 +925,7 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
                                     ? _buildGidGroupMarker(
                                         context,
                                         points: item.points,
-                                        isSelected: isSelected,
+                                        members: item.members,
                                         markerWidth: markerWidth,
                                         markerHeight: markerHeight,
                                         onTap: widget.onCabinetTap,
@@ -910,7 +933,6 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
                                     : _buildFacilityMarker(
                                         context,
                                         point: anchor,
-                                        isSelected: isSelected,
                                         status: _resolveStatus(
                                           widget.deviceStatusMap,
                                           anchor,
@@ -1021,9 +1043,24 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
 
       final group =
           facilities.where((p) => _resolveGid(p) == gid).toList(growable: false);
+      final wsMembers = widget.gidMembersByGid?[gid] ?? const [];
       if (group.length > 1) {
         items.add(
-          _MapMarkerLayerItem.group(_sortFacilitiesMasterFirst(group), gid),
+          _MapMarkerLayerItem.group(
+            _sortFacilitiesMasterFirst(group),
+            gid,
+            members: wsMembers,
+          ),
+        );
+      } else if (group.length == 1 && wsMembers.length > 1) {
+        final anchor = group.first;
+        final displayCount = wsMembers.length > 2 ? 2 : wsMembers.length;
+        items.add(
+          _MapMarkerLayerItem.group(
+            List<FacilityPoint>.filled(displayCount, anchor),
+            gid,
+            members: wsMembers,
+          ),
         );
       } else {
         items.add(_MapMarkerLayerItem.single(group.first));
@@ -1032,75 +1069,230 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     return items;
   }
 
-  String _roleLabelForFacility(FacilityPoint point, int indexInGroup) {
+  String _roleLabelForFacility(
+    FacilityPoint point,
+    int indexInGroup, {
+    GidMapMemberInfo? member,
+  }) {
+    if (member?.isMaster == true) return '主';
+    if (member?.isMaster == false) return '备';
     final master = _resolveIsMaster(point);
     if (master == true) return '主';
     if (master == false) return '备';
     return indexInGroup == 0 ? '主' : '备';
   }
 
+  String? _resolveStatusForMember(
+    FacilityPoint point,
+    GidMapMemberInfo? member,
+  ) {
+    final key = member?.statusLookupKey.trim() ?? '';
+    if (key.isNotEmpty) {
+      final m = widget.deviceStatusMap;
+      if (m != null && m.containsKey(key)) return m[key];
+    }
+    return _resolveStatus(widget.deviceStatusMap, point);
+  }
+
+  bool _resolvePortForMember(
+    Map<String, bool>? portMap,
+    FacilityPoint point,
+    GidMapMemberInfo? member,
+  ) {
+    final key = member?.statusLookupKey.trim() ?? '';
+    if (key.isNotEmpty && portMap != null && portMap.containsKey(key)) {
+      return portMap[key] ?? false;
+    }
+    return _resolvePort(portMap, point);
+  }
+
+  String _markerSelectionKey(
+    FacilityPoint point, {
+    GidMapMemberInfo? member,
+    int indexInGroup = 0,
+  }) {
+    final memberKey = member?.statusLookupKey.trim() ?? '';
+    if (memberKey.isNotEmpty) return 'member:$memberKey';
+    return '${point.selectionKey}@$indexInGroup';
+  }
+
+  String _resolveDisplayName(
+    FacilityPoint point, {
+    String? lookupKey,
+  }) {
+    final m = widget.facilityNameMap;
+    if (m != null) {
+      if (lookupKey != null && lookupKey.isNotEmpty) {
+        final byKey = m[lookupKey];
+        if (byKey != null && byKey.isNotEmpty) return byKey;
+      }
+      final byFacility = m[point.facilityId];
+      if (byFacility != null && byFacility.isNotEmpty) return byFacility;
+      if (point.ip.isNotEmpty) {
+        final byIp = m[point.ip];
+        if (byIp != null && byIp.isNotEmpty) return byIp;
+      }
+      if (point.cameraUri.isNotEmpty) {
+        final byCam = m[point.cameraUri];
+        if (byCam != null && byCam.isNotEmpty) return byCam;
+      }
+    }
+    final sn = point.stationName;
+    if (sn != null && sn.isNotEmpty) return sn;
+    return point.facilityId;
+  }
+
+  String _formatNamePopupLabel(
+    FacilityPoint point, {
+    String? lookupKey,
+    String? roleLabel,
+  }) {
+    final name = _resolveDisplayName(point, lookupKey: lookupKey);
+    if (roleLabel != null && roleLabel.isNotEmpty) {
+      return '名称：$name ($roleLabel)';
+    }
+    final master = _resolveIsMaster(point);
+    if (master == true) return '名称：$name (主)';
+    if (master == false) return '名称：$name (备)';
+    return '名称：$name';
+  }
+
+  Widget _buildClickNameLabel(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFF4A4A4A),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 12,
+          fontFamily: 'Microsoft YaHei',
+          height: 1.2,
+        ),
+      ),
+    );
+  }
+
+  Widget _wrapMapMarkerTapTarget({
+    required String selectionKey,
+    required String popupLabel,
+    required double width,
+    required double height,
+    required Widget child,
+    Function(String)? onTap,
+  }) {
+    final isSelected = widget.selectedGateName == selectionKey;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => onTap?.call(selectionKey),
+      child: SizedBox(
+        width: width,
+        height: height,
+        child: Stack(
+          clipBehavior: Clip.none,
+          alignment: Alignment.topCenter,
+          children: [
+            child,
+            if (isSelected)
+              Positioned(
+                left: 0,
+                top: height - 4,
+                child: _buildClickNameLabel(popupLabel),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   /// 同 GID 多台：紧凑并排，与报到设备列表一致
   Widget _buildGidGroupMarker(
     BuildContext context, {
     required List<FacilityPoint> points,
-    required bool isSelected,
+    List<GidMapMemberInfo> members = const [],
     required double markerWidth,
     required double markerHeight,
     Function(String)? onTap,
   }) {
     const overlap = 0.22;
-    final show = points.length > 2 ? points.sublist(0, 2) : points;
+    final showCount = points.length > 2 ? 2 : points.length;
+    final showPoints = points.sublist(0, showCount);
+    final showMembers =
+        members.length > showCount ? members.sublist(0, showCount) : members;
     final unitW = markerWidth * 0.52;
-    final totalW = unitW * show.length - unitW * overlap * (show.length - 1);
-    final anchor = show.first;
-    final displayName = _resolveDisplayName(anchor);
-    final masterCounts = _resolveAttendGuest(anchor);
-    final tooltipBuf = StringBuffer()
-      ..writeln('设备名称：$displayName')
-      ..writeln('出席人数：${masterCounts.attend}')
-      ..writeln('列席人数：${masterCounts.guest}');
+    final totalW = unitW * showPoints.length -
+        unitW * overlap * (showPoints.length - 1);
 
-    return GestureDetector(
-      onTap: () => onTap?.call(anchor.selectionKey),
-      child: Tooltip(
-        message: tooltipBuf.toString().trimRight(),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          width: totalW,
-          height: markerHeight,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
-            border: isSelected
-                ? Border.all(color: Colors.white, width: 3)
-                : null,
-            boxShadow: isSelected
-                ? [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.3),
-                      blurRadius: 10,
-                      spreadRadius: 2,
-                    ),
-                  ]
-                : null,
-          ),
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-                for (int i = 0; i < show.length; i++)
-                  Positioned(
-                    left: i * unitW * (1 - overlap),
-                    top: 0,
-                    bottom: 0,
-                    width: unitW,
-                    child: _buildFacilityMarkerVisual(
-                      point: show[i],
-                      markerWidth: unitW,
-                      markerHeight: markerHeight,
-                      roleLabel: _roleLabelForFacility(show[i], i),
-                    ),
-                  ),
-              ],
+    return SizedBox(
+      width: totalW,
+      height: markerHeight,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          for (int i = 0; i < showPoints.length; i++)
+            _buildGidGroupMarkerSlot(
+              index: i,
+              point: showPoints[i],
+              member: i < showMembers.length ? showMembers[i] : null,
+              unitW: unitW,
+              overlap: overlap,
+              markerHeight: markerHeight,
+              showPointsCount: showPoints.length,
+              showMembersCount: showMembers.length,
+              onTap: onTap,
             ),
+        ],
+      ),
+    );
+  }
+
+  Positioned _buildGidGroupMarkerSlot({
+    required int index,
+    required FacilityPoint point,
+    GidMapMemberInfo? member,
+    required double unitW,
+    required double overlap,
+    required double markerHeight,
+    required int showPointsCount,
+    required int showMembersCount,
+    Function(String)? onTap,
+  }) {
+    final role = _roleLabelForFacility(point, index, member: member);
+    final showRole = showPointsCount > 1 ||
+        showMembersCount > 1 ||
+        member?.isMaster != null;
+    final selectionKey = _markerSelectionKey(
+      point,
+      member: member,
+      indexInGroup: index,
+    );
+    final popupLabel = _formatNamePopupLabel(
+      point,
+      lookupKey: member?.statusLookupKey,
+      roleLabel: showRole ? role : null,
+    );
+    return Positioned(
+      left: index * unitW * (1 - overlap),
+      top: 0,
+      bottom: 0,
+      width: unitW,
+      child: _wrapMapMarkerTapTarget(
+        selectionKey: selectionKey,
+        popupLabel: popupLabel,
+        width: unitW,
+        height: markerHeight,
+        onTap: onTap,
+        child: _buildFacilityMarkerVisual(
+          point: point,
+          markerWidth: unitW,
+          markerHeight: markerHeight,
+          roleLabel: role,
+          status: _resolveStatusForMember(point, member),
+          isPort1030: _resolvePortForMember(widget.port1030Map, point, member),
+          isPort8084: _resolvePortForMember(widget.port8084Map, point, member),
         ),
       ),
     );
@@ -1111,18 +1303,22 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     required double markerWidth,
     required double markerHeight,
     String? roleLabel,
+    String? status,
+    bool? isPort1030,
+    bool? isPort8084,
   }) {
-    final status = _resolveStatus(widget.deviceStatusMap, point);
-    final isPort1030 = _resolvePort(widget.port1030Map, point);
-    final isPort8084 = _resolvePort(widget.port8084Map, point);
+    final resolvedStatus =
+        status ?? _resolveStatus(widget.deviceStatusMap, point);
+    final port1030 = isPort1030 ?? _resolvePort(widget.port1030Map, point);
+    final port8084 = isPort8084 ?? _resolvePort(widget.port8084Map, point);
     final statusImagePath = _getStatusImagePath(
-      status,
-      isPort1030: isPort1030,
-      isPort8084: isPort8084,
+      resolvedStatus,
+      isPort1030: port1030,
+      isPort8084: port8084,
     );
-    final fallbackImage = isPort1030
+    final fallbackImage = port1030
         ? 'assets/images/dj_kongxian.png'
-        : (isPort8084
+        : (port8084
             ? 'assets/images/jb_konxian.png'
             : 'assets/images/jsj_kongxian.png');
 
@@ -1162,42 +1358,6 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     );
   }
 
-  String _resolveDisplayName(FacilityPoint point) {
-    final m = widget.facilityNameMap;
-    if (m != null) {
-      final byFacility = m[point.facilityId];
-      if (byFacility != null && byFacility.isNotEmpty) return byFacility;
-      if (point.ip.isNotEmpty) {
-        final byIp = m[point.ip];
-        if (byIp != null && byIp.isNotEmpty) return byIp;
-      }
-      if (point.cameraUri.isNotEmpty) {
-        final byCam = m[point.cameraUri];
-        if (byCam != null && byCam.isNotEmpty) return byCam;
-      }
-    }
-    final sn = point.stationName;
-    if (sn != null && sn.isNotEmpty) return sn;
-    return point.facilityId;
-  }
-
-  ({int attend, int guest}) _resolveAttendGuest(FacilityPoint point) {
-    final stats = widget.stationStats;
-    if (stats == null || point.ip.isEmpty) {
-      return (attend: 0, guest: 0);
-    }
-    final row = lookupStationStatRow(
-      stats,
-      point.ip,
-      stationName: point.stationName ?? '',
-    );
-    if (row == null) return (attend: 0, guest: 0);
-    return (
-      attend: row['attend'] ?? 0,
-      guest: row['guest'] ?? 0,
-    );
-  }
-
   ImageProvider<Object> _buildBgImage(FacilityRouteSettings settings) {
     final bytes = settings.bgBytes;
     if (bytes != null && bytes.isNotEmpty) {
@@ -1234,7 +1394,6 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
   Widget _buildFacilityMarker(
     BuildContext context, {
     required FacilityPoint point,
-    required bool isSelected,
     String? status,
     bool isPort1030 = false,
     bool isPort8084 = false,
@@ -1258,48 +1417,31 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     final double effectiveHeight =
         markerHeight > 0 ? markerHeight : (isPort8084 ? 40.0 : 20.0);
 
-    final displayName = _resolveDisplayName(point);
-    final counts = _resolveAttendGuest(point);
-    final tooltipBuf = StringBuffer()
-      ..writeln('设备名称：$displayName')
-      ..writeln('状态：${status ?? '未知状态'}')
-      ..writeln('出席人数：${counts.attend}')
-      ..writeln('列席人数：${counts.guest}');
-
-    return GestureDetector(
-      onTap: () => onTap?.call(point.selectionKey),
-      child: Tooltip(
-        message: tooltipBuf.toString().trimRight(),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          width: effectiveWidth,
-          height: effectiveHeight,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(8),
-            border: isSelected
-                ? Border.all(color: Colors.white, width: 3)
-                : null,
-            boxShadow: isSelected
-                ? [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.3),
-                      blurRadius: 10,
-                      spreadRadius: 2,
-                    ),
-                  ]
-                : null,
-          ),
-          child: Image.asset(
-            statusImagePath ?? fallbackImage,
-            width: effectiveWidth,
-            height: effectiveHeight,
-            fit: BoxFit.contain,
-            errorBuilder: (context, error, stackTrace) {
-              return _buildDefaultMarker(point, isSelected, effectiveHeight);
-            },
-          ),
-        ),
+    final master = _resolveIsMaster(point);
+    final roleLabel = master == true
+        ? '主'
+        : (master == false ? '备' : null);
+    final visual = SizedBox(
+      width: effectiveWidth,
+      height: effectiveHeight,
+      child: Image.asset(
+        statusImagePath ?? fallbackImage,
+        width: effectiveWidth,
+        height: effectiveHeight,
+        fit: BoxFit.contain,
+        errorBuilder: (context, error, stackTrace) {
+          return _buildDefaultMarker(point, false, effectiveHeight);
+        },
       ),
+    );
+
+    return _wrapMapMarkerTapTarget(
+      selectionKey: _markerSelectionKey(point),
+      popupLabel: _formatNamePopupLabel(point, roleLabel: roleLabel),
+      width: effectiveWidth,
+      height: effectiveHeight,
+      onTap: onTap,
+      child: visual,
     );
   }
 

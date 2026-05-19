@@ -242,7 +242,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   // 设备点位数据（单独的 notifier，避免其他 setState 影响底图）
   final ValueNotifier<FacilityRouteMap?> _routeMapNotifier =
-      ValueNotifier<FacilityRouteMap?>(FacilityRouteMap.demo());
+      ValueNotifier<FacilityRouteMap?>(null);
   final ValueNotifier<String?> _selectedFacilityIdNotifier =
       ValueNotifier<String?>(null);
   String? _lastRouteMapSignature; // 避免相同数据重复刷新造成闪烁
@@ -1762,6 +1762,40 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   int _deviceOrderKey(Map<String, dynamic> device) =>
       _parseInt(device['Order'] ?? 0);
+
+  String _deviceStatusLookupKey(Map<String, dynamic> device) {
+    final ip = device['IP']?.toString().trim() ?? '';
+    if (ip.isNotEmpty) return ip;
+    final name = device['name']?.toString().trim() ?? '';
+    if (name.isNotEmpty) return name;
+    final fid = device['FacilityID']?.toString().trim() ?? '';
+    if (fid.isNotEmpty) return fid;
+    return device['NodeID']?.toString().trim() ?? '';
+  }
+
+  Map<String, List<GidMapMemberInfo>> _buildGidMembersForMap() {
+    final Map<String, List<Map<String, dynamic>>> byGid = {};
+    for (final d in _devices) {
+      final gid = (d['GID']?.toString() ?? '').trim();
+      if (gid.isEmpty) continue;
+      byGid.putIfAbsent(gid, () => []).add(d);
+    }
+    final result = <String, List<GidMapMemberInfo>>{};
+    for (final entry in byGid.entries) {
+      final group = List<Map<String, dynamic>>.from(entry.value);
+      _sortGroupDevicesMasterLeft(group);
+      result[entry.key] = group.map((d) {
+        final master = d['isMaster'];
+        return GidMapMemberInfo(
+          statusLookupKey: _deviceStatusLookupKey(d),
+          isMaster: master == true
+              ? true
+              : (master == false ? false : null),
+        );
+      }).toList();
+    }
+    return result;
+  }
 
   /// 按 GID 合并网格项；无 GID 的设备仍单独占一格。
   List<_AttendGridEntry> _buildAttendGridEntries(
@@ -3288,6 +3322,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     final Map<String, String> facilityNameMap = {};
     final Map<String, String> deviceGidMap = {};
     final Map<String, bool> deviceIsMasterMap = {};
+    final gidMembersByGid = _buildGidMembersForMap();
     for (var device in _devices) {
       final deviceName = device['name']?.toString() ?? '';
       final deviceStatus = device['status']?.toString() ?? '';
@@ -3347,16 +3382,18 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
             return DeviceMapWidget(
               routeMap: map,
               selectedGateName: selectedId,
+              onCabinetTap: (key) {
+                _selectedFacilityIdNotifier.value =
+                    _selectedFacilityIdNotifier.value == key ? null : key;
+              },
               deviceStatusMap: deviceStatusMap,
               port8084Map: port8084Map,
               port1030Map: port1030Map,
               facilityNameMap: facilityNameMap,
               deviceGidMap: deviceGidMap,
               deviceIsMasterMap: deviceIsMasterMap,
+              gidMembersByGid: gidMembersByGid,
               stationStats: _stationStats,
-              onCabinetTap: (selectionKey) {
-                _selectedFacilityIdNotifier.value = selectionKey;
-              },
             );
           },
         );
