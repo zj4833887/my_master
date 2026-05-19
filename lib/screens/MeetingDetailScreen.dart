@@ -21,22 +21,27 @@ class _ProgressStepInfo {
   final String title;
   final int step;
   final bool executed;
+  /// 后端原始结束时间字符串（如 `2026年05月19日 14点14分32秒`）
+  final String endTimeRaw;
 
   const _ProgressStepInfo({
     required this.title,
     required this.step,
     required this.executed,
+    this.endTimeRaw = '',
   });
 
   _ProgressStepInfo copyWith({
     String? title,
     int? step,
     bool? executed,
+    String? endTimeRaw,
   }) {
     return _ProgressStepInfo(
       title: title ?? this.title,
       step: step ?? this.step,
       executed: executed ?? this.executed,
+      endTimeRaw: endTimeRaw ?? this.endTimeRaw,
     );
   }
 }
@@ -4438,8 +4443,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     );
     final titleValue =
         map['title'] ?? map['Title'] ?? map['name'] ?? map['Name'];
-    final String title =
-        (titleValue?.toString().isNotEmpty ?? false) ? titleValue.toString() : '';
+    final String titleStr = titleValue == null ? '' : titleValue.toString().trim();
+    final String title = titleStr.isNotEmpty ? titleStr : '';
 
     final int stepValue = _parseInt(
       map['step'] ?? map['Step'] ?? map['index'] ?? map['Index'],
@@ -4457,11 +4462,55 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           map['status'],
     );
 
+    final dynamic endTimeCandidate = map['endTime'] ??
+        map['EndTime'] ??
+        map['end_time'] ??
+        map['finishTime'] ??
+        map['FinishTime'];
+    final String endRaw =
+        endTimeCandidate == null ? '' : endTimeCandidate.toString().trim();
+
     return _ProgressStepInfo(
       title: title.isNotEmpty ? title : '步骤$step',
       step: step,
       executed: executed,
+      endTimeRaw: endRaw,
     );
+  }
+
+  /// 业务流程步骤：仅展示时分秒（如 `14:14:32`），供标题下方一行显示。
+  String _formatProgressEndTimeForUi(String? raw) {
+    final s = (raw ?? '').trim();
+    if (s.isEmpty) return '';
+    // 中文：`2026年05月19日 14点14分32秒` 或 `14点14分32秒`
+    final cn = RegExp(r'(\d{1,2})点(\d{1,2})分(?:(\d{1,2})秒)?');
+    final m = cn.firstMatch(s);
+    if (m != null) {
+      final h = int.tryParse(m.group(1) ?? '0') ?? 0;
+      final mi = int.tryParse(m.group(2) ?? '0') ?? 0;
+      final sc = int.tryParse(m.group(3) ?? '0') ?? 0;
+      return '${h.toString().padLeft(2, '0')}:'
+          '${mi.toString().padLeft(2, '0')}:'
+          '${sc.toString().padLeft(2, '0')}';
+    }
+    // 已是 `HH:mm:ss` 或带日期的 ISO，尽量只取时间部分
+    final iso = DateTime.tryParse(s.replaceAll(' ', 'T'));
+    if (iso != null) {
+      return '${iso.hour.toString().padLeft(2, '0')}:'
+          '${iso.minute.toString().padLeft(2, '0')}:'
+          '${iso.second.toString().padLeft(2, '0')}';
+    }
+    final hmss = RegExp(r'(\d{1,2}):(\d{1,2}):(\d{1,2})');
+    final t = hmss.firstMatch(s);
+    if (t != null) {
+      final h = int.tryParse(t.group(1) ?? '0') ?? 0;
+      final mi = int.tryParse(t.group(2) ?? '0') ?? 0;
+      final sc = int.tryParse(t.group(3) ?? '0') ?? 0;
+      return '${h.toString().padLeft(2, '0')}:'
+          '${mi.toString().padLeft(2, '0')}:'
+          '${sc.toString().padLeft(2, '0')}';
+    }
+    return '';
   }
 
   bool _parseBool(dynamic value) {
@@ -4556,16 +4605,36 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                 ? Colors.black87
                 : (isActive ? const Color(0xFF1E88E5) : Colors.black54);
 
+            final timeLine = _formatProgressEndTimeForUi(steps[index].endTimeRaw);
+
             return Expanded(
-              child: Text(
-                steps[index].title,
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: isCrowded ? 12 : 14,
-                  fontWeight:
-                      isCompleted ? FontWeight.w600 : FontWeight.w500,
-                  color: textColor,
-                ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    steps[index].title,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: isCrowded ? 12 : 14,
+                      fontWeight:
+                          isCompleted ? FontWeight.w600 : FontWeight.w500,
+                      color: textColor,
+                    ),
+                  ),
+                  if (timeLine.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      timeLine,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: isCrowded ? 10 : 11,
+                        fontWeight: FontWeight.w400,
+                        color: textColor.withOpacity(0.85),
+                        fontFamily: 'Microsoft YaHei',
+                      ),
+                    ),
+                  ],
+                ],
               ),
             );
           }),
