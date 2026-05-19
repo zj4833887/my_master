@@ -243,8 +243,6 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   // 设备点位数据（单独的 notifier，避免其他 setState 影响底图）
   final ValueNotifier<FacilityRouteMap?> _routeMapNotifier =
       ValueNotifier<FacilityRouteMap?>(null);
-  final ValueNotifier<String?> _selectedFacilityIdNotifier =
-      ValueNotifier<String?>(null);
   String? _lastRouteMapSignature; // 避免相同数据重复刷新造成闪烁
 
   // 步骤进度状态
@@ -271,7 +269,6 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   void dispose() {
     _tabController.dispose();
     _routeMapNotifier.dispose();
-    _selectedFacilityIdNotifier.dispose();
     _sloganTableScrollController.dispose();
     _metricsSubscription?.cancel();
     _dataCheckTimer?.cancel();
@@ -3376,26 +3373,16 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return ValueListenableBuilder<FacilityRouteMap?>(
       valueListenable: _routeMapNotifier,
       builder: (context, map, _) {
-        return ValueListenableBuilder<String?>(
-          valueListenable: _selectedFacilityIdNotifier,
-          builder: (context, selectedId, __) {
-            return DeviceMapWidget(
-              routeMap: map,
-              selectedGateName: selectedId,
-              onCabinetTap: (key) {
-                _selectedFacilityIdNotifier.value =
-                    _selectedFacilityIdNotifier.value == key ? null : key;
-              },
-              deviceStatusMap: deviceStatusMap,
-              port8084Map: port8084Map,
-              port1030Map: port1030Map,
-              facilityNameMap: facilityNameMap,
-              deviceGidMap: deviceGidMap,
-              deviceIsMasterMap: deviceIsMasterMap,
-              gidMembersByGid: gidMembersByGid,
-              stationStats: _stationStats,
-            );
-          },
+        return DeviceMapWidget(
+          routeMap: map,
+          deviceStatusMap: deviceStatusMap,
+          port8084Map: port8084Map,
+          port1030Map: port1030Map,
+          facilityNameMap: facilityNameMap,
+          deviceGidMap: deviceGidMap,
+          deviceIsMasterMap: deviceIsMasterMap,
+          gidMembersByGid: gidMembersByGid,
+          stationStats: _stationStats,
         );
       },
     );

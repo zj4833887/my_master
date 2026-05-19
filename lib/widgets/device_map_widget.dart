@@ -4,6 +4,8 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
+import '../utils/station_stat_lookup.dart';
+
 /// 设备类型，用于控制颜色与图例
 enum FacilityType {
   cabinet, // 报到机柜
@@ -730,8 +732,6 @@ Size _markerSizeOnCanvas({
 class DeviceMapWidget extends StatefulWidget {
   const DeviceMapWidget({
     super.key,
-    this.onCabinetTap,
-    this.selectedGateName,
     this.routeMap,
     this.deviceStatusMap, // 设备状态映射：facilityId -> status
     this.port1030Map, // 设备是否 1030 端口：facilityId -> true/false
@@ -743,8 +743,6 @@ class DeviceMapWidget extends StatefulWidget {
     this.stationStats, // 站点人数：Station -> { attend, guest }（与 WS_StationNum 一致，查找见 lookupStationStatRow）
   });
 
-  final Function(String)? onCabinetTap; // 点击机柜/设备的回调
-  final String? selectedGateName; // 当前选中点位的 selectionKey（见 FacilityPoint.selectionKey）
   final FacilityRouteMap? routeMap; // 路由与点位数据
   final Map<String, String>? deviceStatusMap; // 设备状态映射：facilityId -> status (空闲/报到/工作/重报)
   final Map<String, bool>? port1030Map; // 设备是否 1030 端口：facilityId -> true/false
@@ -796,6 +794,7 @@ class _MapMarkerLayerItem {
 class _DeviceMapWidgetState extends State<DeviceMapWidget> {
   ImageProvider<Object>? _cachedBgImage;
   FacilityRouteSettings? _cachedSettings;
+  String? _hoverMarkerKey;
 
   ImageProvider<Object> _getOrBuildBgImage(FacilityRouteSettings settings) {
     // 如果 settings 没变，直接返回缓存的 ImageProvider
@@ -928,7 +927,6 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
                                         members: item.members,
                                         markerWidth: markerWidth,
                                         markerHeight: markerHeight,
-                                        onTap: widget.onCabinetTap,
                                       )
                                     : _buildFacilityMarker(
                                         context,
@@ -941,7 +939,6 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
                                         isPort8084: isPort8084,
                                         markerWidth: markerWidth,
                                         markerHeight: markerHeight,
-                                        onTap: widget.onCabinetTap,
                                       ),
                               );
                             }),
@@ -1142,22 +1139,61 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     return point.facilityId;
   }
 
-  String _formatNamePopupLabel(
+  ({int attend, int guest}) _resolveAttendGuest(
+    FacilityPoint point, {
+    String? lookupKey,
+  }) {
+    final stats = widget.stationStats;
+    if (stats == null) return (attend: 0, guest: 0);
+
+    Map<String, int>? row;
+    final key = lookupKey?.trim() ?? '';
+    if (key.isNotEmpty) {
+      row = lookupStationStatRow(
+        stats,
+        key,
+        stationName: key,
+        nodeId: key,
+      );
+    }
+    row ??= lookupStationStatRow(
+      stats,
+      point.ip,
+      stationName: point.stationName ?? '',
+      nodeId: point.facilityId,
+    );
+    if (row == null) return (attend: 0, guest: 0);
+    return (
+      attend: row['attend'] ?? 0,
+      guest: row['guest'] ?? 0,
+    );
+  }
+
+  String _formatHoverPopupLabel(
     FacilityPoint point, {
     String? lookupKey,
     String? roleLabel,
+    bool showRoleInName = false,
   }) {
     final name = _resolveDisplayName(point, lookupKey: lookupKey);
-    if (roleLabel != null && roleLabel.isNotEmpty) {
-      return '名称：$name ($roleLabel)';
+    String nameLine;
+    if (showRoleInName && roleLabel != null && roleLabel.isNotEmpty) {
+      nameLine = '名称：$name ($roleLabel)';
+    } else {
+      final master = _resolveIsMaster(point);
+      if (master == true) {
+        nameLine = '名称：$name (主)';
+      } else if (master == false) {
+        nameLine = '名称：$name (备)';
+      } else {
+        nameLine = '名称：$name';
+      }
     }
-    final master = _resolveIsMaster(point);
-    if (master == true) return '名称：$name (主)';
-    if (master == false) return '名称：$name (备)';
-    return '名称：$name';
+    final counts = _resolveAttendGuest(point, lookupKey: lookupKey);
+    return '$nameLine\n出席人数：${counts.attend}\n列席人数：${counts.guest}';
   }
 
-  Widget _buildClickNameLabel(String text) {
+  Widget _buildMapPopupLabel(String text) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
@@ -1170,24 +1206,37 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
           color: Colors.white,
           fontSize: 12,
           fontFamily: 'Microsoft YaHei',
-          height: 1.2,
+          height: 1.35,
         ),
       ),
     );
   }
 
-  Widget _wrapMapMarkerTapTarget({
-    required String selectionKey,
-    required String popupLabel,
+  Widget _wrapMapMarkerHoverTarget({
+    required FacilityPoint point,
+    String? lookupKey,
+    String? roleLabel,
+    bool showRoleInName = false,
+    required String hoverKey,
     required double width,
     required double height,
     required Widget child,
-    Function(String)? onTap,
   }) {
-    final isSelected = widget.selectedGateName == selectionKey;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => onTap?.call(selectionKey),
+    final isHovered = _hoverMarkerKey == hoverKey;
+    final hoverLabel = _formatHoverPopupLabel(
+      point,
+      lookupKey: lookupKey,
+      roleLabel: roleLabel,
+      showRoleInName: showRoleInName,
+    );
+
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hoverMarkerKey = hoverKey),
+      onExit: (_) {
+        if (_hoverMarkerKey == hoverKey) {
+          setState(() => _hoverMarkerKey = null);
+        }
+      },
       child: SizedBox(
         width: width,
         height: height,
@@ -1196,11 +1245,11 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
           alignment: Alignment.topCenter,
           children: [
             child,
-            if (isSelected)
+            if (isHovered)
               Positioned(
                 left: 0,
-                top: height - 4,
-                child: _buildClickNameLabel(popupLabel),
+                bottom: height + 2,
+                child: _buildMapPopupLabel(hoverLabel),
               ),
           ],
         ),
@@ -1215,7 +1264,6 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     List<GidMapMemberInfo> members = const [],
     required double markerWidth,
     required double markerHeight,
-    Function(String)? onTap,
   }) {
     const overlap = 0.22;
     final showCount = points.length > 2 ? 2 : points.length;
@@ -1242,7 +1290,6 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
               markerHeight: markerHeight,
               showPointsCount: showPoints.length,
               showMembersCount: showMembers.length,
-              onTap: onTap,
             ),
         ],
       ),
@@ -1258,33 +1305,29 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     required double markerHeight,
     required int showPointsCount,
     required int showMembersCount,
-    Function(String)? onTap,
   }) {
     final role = _roleLabelForFacility(point, index, member: member);
-    final showRole = showPointsCount > 1 ||
+    final showRoleInName = showPointsCount > 1 ||
         showMembersCount > 1 ||
         member?.isMaster != null;
-    final selectionKey = _markerSelectionKey(
+    final hoverKey = _markerSelectionKey(
       point,
       member: member,
       indexInGroup: index,
-    );
-    final popupLabel = _formatNamePopupLabel(
-      point,
-      lookupKey: member?.statusLookupKey,
-      roleLabel: showRole ? role : null,
     );
     return Positioned(
       left: index * unitW * (1 - overlap),
       top: 0,
       bottom: 0,
       width: unitW,
-      child: _wrapMapMarkerTapTarget(
-        selectionKey: selectionKey,
-        popupLabel: popupLabel,
+      child: _wrapMapMarkerHoverTarget(
+        point: point,
+        lookupKey: member?.statusLookupKey,
+        roleLabel: role,
+        showRoleInName: showRoleInName,
+        hoverKey: hoverKey,
         width: unitW,
         height: markerHeight,
-        onTap: onTap,
         child: _buildFacilityMarkerVisual(
           point: point,
           markerWidth: unitW,
@@ -1399,7 +1442,6 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     bool isPort8084 = false,
     double markerWidth = 20,
     double markerHeight = 20,
-    Function(String)? onTap,
   }) {
     // 根据状态获取对应的图片路径
     final statusImagePath = _getStatusImagePath(
@@ -1417,10 +1459,6 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     final double effectiveHeight =
         markerHeight > 0 ? markerHeight : (isPort8084 ? 40.0 : 20.0);
 
-    final master = _resolveIsMaster(point);
-    final roleLabel = master == true
-        ? '主'
-        : (master == false ? '备' : null);
     final visual = SizedBox(
       width: effectiveWidth,
       height: effectiveHeight,
@@ -1435,12 +1473,18 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
       ),
     );
 
-    return _wrapMapMarkerTapTarget(
-      selectionKey: _markerSelectionKey(point),
-      popupLabel: _formatNamePopupLabel(point, roleLabel: roleLabel),
+    final master = _resolveIsMaster(point);
+    final roleLabel = master == true
+        ? '主'
+        : (master == false ? '备' : null);
+
+    return _wrapMapMarkerHoverTarget(
+      point: point,
+      roleLabel: roleLabel,
+      showRoleInName: roleLabel != null,
+      hoverKey: _markerSelectionKey(point),
       width: effectiveWidth,
       height: effectiveHeight,
-      onTap: onTap,
       child: visual,
     );
   }
