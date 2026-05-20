@@ -1139,6 +1139,25 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     return point.facilityId;
   }
 
+  /// 悬停浮层用：去掉名称末尾主/备相关括号（含「备88」等），避免「东门南 (备88) (备)」重复。
+  String _stripHoverMapNameDecorations(String raw) {
+    var s = raw.trim();
+    if (s.isEmpty) return raw;
+    final tail = RegExp(r'\s*[\(（]([^)）]+)[\)）]\s*$');
+    while (true) {
+      final m = tail.firstMatch(s);
+      if (m == null) break;
+      final inner = m.group(1)!.trim();
+      final isRoleParen = inner == '主' ||
+          inner == '备' ||
+          RegExp(r'^备\d+$').hasMatch(inner) ||
+          RegExp(r'^主\d+$').hasMatch(inner);
+      if (!isRoleParen) break;
+      s = s.substring(0, m.start).trimRight();
+    }
+    return s.isEmpty ? raw.trim() : s;
+  }
+
   ({int attend, int guest}) _resolveAttendGuest(
     FacilityPoint point, {
     String? lookupKey,
@@ -1172,25 +1191,12 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
   String _formatHoverPopupLabel(
     FacilityPoint point, {
     String? lookupKey,
-    String? roleLabel,
-    bool showRoleInName = false,
   }) {
-    final name = _resolveDisplayName(point, lookupKey: lookupKey);
-    String nameLine;
-    if (showRoleInName && roleLabel != null && roleLabel.isNotEmpty) {
-      nameLine = '名称：$name ($roleLabel)';
-    } else {
-      final master = _resolveIsMaster(point);
-      if (master == true) {
-        nameLine = '名称：$name (主)';
-      } else if (master == false) {
-        nameLine = '名称：$name (备)';
-      } else {
-        nameLine = '名称：$name';
-      }
-    }
+    final name = _stripHoverMapNameDecorations(
+      _resolveDisplayName(point, lookupKey: lookupKey),
+    );
     final counts = _resolveAttendGuest(point, lookupKey: lookupKey);
-    return '$nameLine\n出席人数：${counts.attend}\n列席人数：${counts.guest}';
+    return '名称：$name\n出席人数：${counts.attend}\n列席人数：${counts.guest}';
   }
 
   Widget _buildMapPopupLabel(String text) {
@@ -1215,20 +1221,13 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
   Widget _wrapMapMarkerHoverTarget({
     required FacilityPoint point,
     String? lookupKey,
-    String? roleLabel,
-    bool showRoleInName = false,
     required String hoverKey,
     required double width,
     required double height,
     required Widget child,
   }) {
     final isHovered = _hoverMarkerKey == hoverKey;
-    final hoverLabel = _formatHoverPopupLabel(
-      point,
-      lookupKey: lookupKey,
-      roleLabel: roleLabel,
-      showRoleInName: showRoleInName,
-    );
+    final hoverLabel = _formatHoverPopupLabel(point, lookupKey: lookupKey);
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hoverMarkerKey = hoverKey),
@@ -1288,8 +1287,6 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
               unitW: unitW,
               overlap: overlap,
               markerHeight: markerHeight,
-              showPointsCount: showPoints.length,
-              showMembersCount: showMembers.length,
             ),
         ],
       ),
@@ -1303,13 +1300,8 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     required double unitW,
     required double overlap,
     required double markerHeight,
-    required int showPointsCount,
-    required int showMembersCount,
   }) {
     final role = _roleLabelForFacility(point, index, member: member);
-    final showRoleInName = showPointsCount > 1 ||
-        showMembersCount > 1 ||
-        member?.isMaster != null;
     final hoverKey = _markerSelectionKey(
       point,
       member: member,
@@ -1323,8 +1315,6 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
       child: _wrapMapMarkerHoverTarget(
         point: point,
         lookupKey: member?.statusLookupKey,
-        roleLabel: role,
-        showRoleInName: showRoleInName,
         hoverKey: hoverKey,
         width: unitW,
         height: markerHeight,
@@ -1473,15 +1463,8 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
       ),
     );
 
-    final master = _resolveIsMaster(point);
-    final roleLabel = master == true
-        ? '主'
-        : (master == false ? '备' : null);
-
     return _wrapMapMarkerHoverTarget(
       point: point,
-      roleLabel: roleLabel,
-      showRoleInName: roleLabel != null,
       hoverKey: _markerSelectionKey(point),
       width: effectiveWidth,
       height: effectiveHeight,
