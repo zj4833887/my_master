@@ -1720,6 +1720,15 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return '';
   }
 
+  bool _deviceHasGid(Map<String, dynamic> device) {
+    return (device['GID']?.toString() ?? '').trim().isNotEmpty;
+  }
+
+  /// 同 GID 主备机柜用 device2；无 GID 仍用 device.png 原样式。
+  bool _useRackGidVisual(Map<String, dynamic> device) {
+    return device['ProcessType'] == 'rack' && _deviceHasGid(device);
+  }
+
   Map<String, dynamic>? _masterDeviceInGroup(List<Map<String, dynamic>> devices) {
     for (final d in devices) {
       if (d['isMaster'] == true) return d;
@@ -1727,10 +1736,25 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return devices.isNotEmpty ? devices.first : null;
   }
 
+  /// 当前在用的主机/备机（优先 isActive，其次工作状态，最后默认主）
+  Map<String, dynamic>? _activeDeviceInGroup(
+    List<Map<String, dynamic>> devices,
+  ) {
+    for (final d in devices) {
+      if (d['isActive'] == true) return d;
+    }
+    for (final d in devices) {
+      final st = d['status']?.toString() ?? '';
+      if (st == '工作' || st == '报到' || st == '重报') return d;
+    }
+    return _masterDeviceInGroup(devices);
+  }
+
   String? _deviceRoleBadge(
     Map<String, dynamic> device, {
     bool inGroup = false,
   }) {
+    if (_useRackGidVisual(device)) return null;
     if (!inGroup && device['status']?.toString() != '联机') return null;
     if (device['isMaster'] == true) return '主';
     if (device['isMaster'] == false) return '备';
@@ -3546,7 +3570,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     const crossAxisCount = 8;
     const spacing = 10.0;
     const padding = 10.0;
-    const aspectRatio = 0.74;
+    // 卡片略增高；aspectRatio 越小，格子越高
+    const aspectRatio = 0.58;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -3585,7 +3610,338 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     );
   }
 
-  /// 同 GID：与单卡同宽；主左备右并排；组底统一显示主机名称与出席/列席。
+  static const String _rackClassicAsset = 'assets/images/device.png';
+  /// 同 GID 主备机柜底图；屏幕与工控状态由代码叠加。
+  static const String _rackGidAsset = 'assets/images/device2.png';
+  static const double _rackImageAspect = 1044 / 1490;
+  // 大屏叠加区 = 红框范围：屏顶至工控机上方（1044×1490 标定）
+  static const double _rackScreenLeft = 280 / 1044;
+  static const double _rackScreenTop = 150 / 1490;
+  static const double _rackScreenRight = (1044 - 854) / 1044;
+  static const double _rackScreenBottom = (1490 - 1034) / 1490;
+  /// 红框内联机色块：窄高竖条，垂直居中
+  static const double _rackScreenPanelWidthFrac = 0.5;
+  static const double _rackScreenPanelHeightFrac = 0.88;
+  /// 大屏竖排状态字间距（相对字号）
+  static const double _rackScreenCharGapFrac = 0.48;
+  // 工控机中心 x；状态条在硬件下方灰条区
+  static const double _rackIpcMasterCenterX = 425 / 1044;
+  static const double _rackIpcBackupCenterX = 726 / 1044;
+  static const double _rackIpcStatusTop = 1210 / 1490;
+  static const double _rackIpcBarWidthFrac = 48 / 1044;
+  static const double _rackIpcBarHeightFrac = 10 / 1490;
+  static const double _rackIpcBarMinWidth = 22;
+  static const double _rackIpcBarMinHeight = 5;
+  static const double _rackIpcLabelMinSize = 10;
+  /// GID 组卡底部：名称 + 出席/列席（两行，与名称留间距）
+  static const double _rackGroupFooterHeight = 46;
+  static const double _attendNameToCountGap = 6;
+  /// 地垫空闲：底部状态条高度（相对图片区）
+  static const double _didianIdleStripHeightFrac = 0.34;
+  static const double _didianIdleStripHeightFracInGroup = 0.30;
+
+  /// 在可用区域内按比例放入 device2，避免 AspectRatio 撑破固定高度。
+  Size _rackCabinetFittedSize(double maxWidth, double maxHeight) {
+    if (maxWidth <= 0 || maxHeight <= 0) return Size.zero;
+    var w = maxWidth;
+    var h = w / _rackImageAspect;
+    if (h > maxHeight) {
+      h = maxHeight;
+      w = h * _rackImageAspect;
+    }
+    return Size(w, h);
+  }
+
+  /// 主机同组：单机柜；大屏为当前在用机状态，底部为主/备工控机联机指示。
+  Widget _buildRackGroupCabinetArea(List<Map<String, dynamic>> devices) {
+    final Map<String, dynamic>? masterDevice = _masterDeviceInGroup(devices) ??
+        (devices.isNotEmpty ? devices.first : null);
+    final Map<String, dynamic>? backupDevice = _backupDeviceInGroup(devices);
+    final Map<String, dynamic>? activeDevice = _activeDeviceInGroup(devices);
+
+    Widget tapHalf(Map<String, dynamic>? device) {
+      if (device == null) return const Expanded(child: SizedBox());
+      final status = device['status']?.toString() ?? '';
+      final isTapDisabled = status == '空闲' || status == '脱机';
+      return Expanded(
+        child: InkWell(
+          onTap: isTapDisabled ? null : () => _onAttendDeviceTap(device),
+          child: const SizedBox.expand(),
+        ),
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final fitted = _rackCabinetFittedSize(
+          constraints.maxWidth,
+          constraints.maxHeight,
+        );
+        if (fitted.width <= 0 || fitted.height <= 0) {
+          return const SizedBox.shrink();
+        }
+        return Center(
+          child: SizedBox(
+            width: fitted.width,
+            height: fitted.height,
+            child: Stack(
+              fit: StackFit.expand,
+              clipBehavior: Clip.hardEdge,
+              children: [
+                _buildRackCabinetStack(
+                  screenStatus:
+                      activeDevice?['status']?.toString() ?? '空闲',
+                  masterDevice: masterDevice,
+                  backupDevice: backupDevice,
+                ),
+                Row(
+                  children: [
+                    tapHalf(masterDevice),
+                    tapHalf(backupDevice),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Map<String, dynamic>? _backupDeviceInGroup(
+    List<Map<String, dynamic>> devices,
+  ) {
+    for (final d in devices) {
+      if (d['isMaster'] == false) return d;
+    }
+    if (devices.length > 1) {
+      final master = _masterDeviceInGroup(devices);
+      for (final d in devices) {
+        if (!identical(d, master)) return d;
+      }
+    }
+    return null;
+  }
+
+  /// device2 机柜：上屏工作状态 + 工控机下方主/备状态条。
+  Widget _buildRackCabinetVisual({
+    Map<String, dynamic>? screenDevice,
+    Map<String, dynamic>? masterDevice,
+    Map<String, dynamic>? backupDevice,
+  }) {
+    final String screenStatus =
+        screenDevice?['status']?.toString() ?? '空闲';
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final fitted = _rackCabinetFittedSize(
+          constraints.maxWidth,
+          constraints.maxHeight,
+        );
+        if (fitted.width <= 0 || fitted.height <= 0) {
+          return const SizedBox.shrink();
+        }
+        return Center(
+          child: SizedBox(
+            width: fitted.width,
+            height: fitted.height,
+            child: _buildRackCabinetStack(
+              screenStatus: screenStatus,
+              masterDevice: masterDevice,
+              backupDevice: backupDevice,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  /// 大屏状态 + 工控机下方主/备小矩形状态（叠在底图内，不占卡片底部高度）。
+  Widget _buildRackCabinetStack({
+    required String screenStatus,
+    Map<String, dynamic>? masterDevice,
+    Map<String, dynamic>? backupDevice,
+  }) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final h = constraints.maxHeight;
+        final w = constraints.maxWidth;
+        return Stack(
+          fit: StackFit.expand,
+          clipBehavior: Clip.hardEdge,
+          children: [
+            Image.asset(
+              _rackGidAsset,
+              fit: BoxFit.fill,
+              filterQuality: FilterQuality.high,
+              gaplessPlayback: false,
+              key: const ValueKey('rack_gid_device2_v4'),
+            ),
+            Positioned(
+              left: w * _rackScreenLeft,
+              top: h * _rackScreenTop,
+              right: w * _rackScreenRight,
+              bottom: h * _rackScreenBottom,
+              child: Align(
+                alignment: Alignment.center,
+                child: _buildRackScreenPanel(
+                  screenStatus,
+                  slotWidth: w * (1 - _rackScreenLeft - _rackScreenRight),
+                  slotHeight: h * (1 - _rackScreenTop - _rackScreenBottom),
+                ),
+              ),
+            ),
+            if (masterDevice != null)
+              _buildRackIpcStatusPositioned(
+                w: w,
+                h: h,
+                centerX: w * _rackIpcMasterCenterX,
+                device: masterDevice,
+                label: '主',
+              ),
+            if (backupDevice != null)
+              _buildRackIpcStatusPositioned(
+                w: w,
+                h: h,
+                centerX: w * _rackIpcBackupCenterX,
+                device: backupDevice,
+                label: '备',
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildRackIpcStatusPositioned({
+    required double w,
+    required double h,
+    required double centerX,
+    required Map<String, dynamic> device,
+    required String label,
+  }) {
+    final double barW = math.max(_rackIpcBarMinWidth, w * _rackIpcBarWidthFrac);
+    final double barH =
+        math.max(_rackIpcBarMinHeight, h * _rackIpcBarHeightFrac);
+    final double labelSize = _rackIpcLabelMinSize;
+    final double top = h * _rackIpcStatusTop;
+
+    return Positioned(
+      left: centerX - barW / 2,
+      top: top,
+      width: barW,
+      child: _buildRackIpcStatusSlot(
+        device,
+        label: label,
+        barWidth: barW,
+        barHeight: barH,
+        labelSize: labelSize,
+      ),
+    );
+  }
+
+  Widget _buildRackIpcStatusSlot(
+    Map<String, dynamic> device, {
+    required String label,
+    required double barWidth,
+    required double barHeight,
+    required double labelSize,
+  }) {
+    final String status = device['status']?.toString() ?? '';
+    final Color barColor = _getStatusBackgroundColor(status);
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Container(
+          width: barWidth,
+          height: barHeight,
+          decoration: BoxDecoration(
+            color: barColor,
+            borderRadius: BorderRadius.circular(2),
+            boxShadow: [
+              BoxShadow(
+                color: barColor.withOpacity(0.4),
+                blurRadius: 1.5,
+                offset: const Offset(0, 1),
+              ),
+            ],
+          ),
+        ),
+        SizedBox(height: math.max(2.0, barHeight * 0.35)),
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: labelSize,
+            fontWeight: FontWeight.bold,
+            color: Colors.black,
+            fontFamily: 'Microsoft YaHei',
+            height: 1.1,
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// GID 大屏竖排状态字，字与字之间留间隙。
+  Widget _buildRackVerticalStatusChars(
+    String status, {
+    required double fontSize,
+    required Color color,
+  }) {
+    final List<String> chars =
+        _getStatusDisplayText(status, 'rack').split('\n');
+    final double gap = fontSize * _rackScreenCharGapFrac;
+    final textStyle = TextStyle(
+      fontSize: fontSize,
+      fontWeight: FontWeight.bold,
+      color: color,
+      fontFamily: 'Microsoft YaHei',
+      height: 1.0,
+    );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < chars.length; i++) ...[
+          if (i > 0) SizedBox(height: gap),
+          Text(chars[i], style: textStyle, textAlign: TextAlign.center),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildRackScreenPanel(
+    String status, {
+    required double slotWidth,
+    required double slotHeight,
+  }) {
+    final Color textColor = _rackStatusTextColor(status);
+    final double blockW = slotWidth * _rackScreenPanelWidthFrac;
+    final double blockH = slotHeight * _rackScreenPanelHeightFrac;
+    final double fontSize =
+        (blockH * 0.14).clamp(12.0, 20.0);
+
+    return SizedBox(
+      width: blockW,
+      height: blockH,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: _getStatusBackgroundColor(status),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Center(
+          child: _buildRackVerticalStatusChars(
+            status,
+            fontSize: fontSize,
+            color: textColor,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// 同 GID：与单卡同宽；主机为机柜+左右状态块，其他类型主左备右并排；组底统一显示名称与出席/列席。
   Widget _buildAttendGroupCard(
     List<Map<String, dynamic>> devices, {
     required double height,
@@ -3600,46 +3956,83 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         : (groupName.trim().isNotEmpty ? groupName.trim() : '');
     final attend = master?['attend'] ?? 0;
     final guest = master?['guest'] ?? 0;
+    final bool rackGid =
+        isRack && devices.isNotEmpty && _deviceHasGid(devices.first);
+
+    final decoration = BoxDecoration(
+      color: isRack ? Colors.grey[200] : Colors.white,
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(color: Colors.grey.shade300, width: 1),
+      boxShadow: const [
+        BoxShadow(
+          color: Colors.black12,
+          blurRadius: 1,
+          offset: Offset(0, 2),
+        ),
+      ],
+    );
+
+    if (rackGid) {
+      return Container(
+        height: height,
+        clipBehavior: Clip.antiAlias,
+        decoration: decoration,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: ClipRect(
+                child: _buildRackGroupCabinetArea(devices),
+              ),
+            ),
+            SizedBox(
+              height: _rackGroupFooterHeight,
+              child: _buildRackAttendGroupFooter(
+                displayName: displayName,
+                attend: attend,
+                guest: guest,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
     return Container(
       height: height,
       clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        color: isRack ? Colors.grey[200] : Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade300, width: 1),
-        boxShadow: const [
-          BoxShadow(
-            color: Colors.black12,
-            blurRadius: 1,
-            offset: Offset(0, 2),
-          ),
-        ],
-      ),
+      decoration: decoration,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Expanded(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (int i = 0; i < devices.length; i++)
-                  Expanded(
-                    child: ClipRect(
-                      child: _buildAttendDeviceTile(
-                        devices[i],
-                        inGroup: true,
-                        showNameAndCounts: false,
-                        roleBadgeOverride: devices[i]['isMaster'] == true
-                            ? '主'
-                            : (devices[i]['isMaster'] == false
-                                ? '备'
-                                : (i == 0 ? '主' : '备')),
-                      ),
+            child: isRack
+                ? Center(
+                    child: _buildAttendDeviceTile(
+                      devices.first,
+                      showNameAndCounts: false,
                     ),
+                  )
+                : Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (int i = 0; i < devices.length; i++)
+                        Expanded(
+                          child: ClipRect(
+                            child: _buildAttendDeviceTile(
+                              devices[i],
+                              inGroup: true,
+                              showNameAndCounts: false,
+                              roleBadgeOverride: devices[i]['isMaster'] == true
+                                  ? '主'
+                                  : (devices[i]['isMaster'] == false
+                                      ? '备'
+                                      : (i == 0 ? '主' : '备')),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
-              ],
-            ),
           ),
           if (displayName.isNotEmpty)
             Padding(
@@ -3656,24 +4049,71 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                 ),
               ),
             ),
+          if (displayName.isNotEmpty)
+            const SizedBox(height: _attendNameToCountGap),
           Padding(
-            padding: const EdgeInsets.only(bottom: 4, top: 1),
+            padding: const EdgeInsets.only(bottom: 4),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 MixedFontText(
                   '出席: $attend',
-                  style: _attendGuestCountTextStyle.copyWith(fontSize: 12),
+                  style: _attendGuestCountTextStyle,
                 ),
                 const SizedBox(height: 1),
                 MixedFontText(
                   '列席: $guest',
-                  style: _attendGuestCountTextStyle.copyWith(fontSize: 12),
+                  style: _attendGuestCountTextStyle,
                 ),
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildRackAttendGroupFooter({
+    required String displayName,
+    required int attend,
+    required int guest,
+  }) {
+    const footerTextStyle = TextStyle(
+      fontSize: 11,
+      height: 1.0,
+      fontWeight: FontWeight.w600,
+      fontFamily: 'Microsoft YaHei',
+      color: Colors.black87,
+    );
+    return SizedBox(
+      height: _rackGroupFooterHeight,
+      width: double.infinity,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (displayName.isNotEmpty)
+              Text(
+                displayName,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: footerTextStyle.copyWith(color: Colors.black),
+              ),
+            if (displayName.isNotEmpty)
+              SizedBox(height: _attendNameToCountGap),
+            MixedFontText(
+              '出席: $attend',
+              style: footerTextStyle,
+            ),
+            const SizedBox(height: 2),
+            MixedFontText(
+              '列席: $guest',
+              style: footerTextStyle,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -3693,9 +4133,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         deviceIp.endsWith('1030');
     final bool isTapDisabled =
         status == '空闲' || status == '脱机' || isDidianLike;
-    final Color textColor = status == '工作' || status == '报到' || status == '重报'
-        ? Colors.black
-        : Colors.white;
+    final Color textColor = _rackStatusTextColor(status);
 
     final double nameFontSize = inGroup ? 12 : 14;
     final TextStyle countStyle = inGroup
@@ -3705,90 +4143,141 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     final String? roleBadge =
         roleBadgeOverride ?? _deviceRoleBadge(device, inGroup: inGroup);
 
+    final bool useRackGid = _useRackGidVisual(device);
+    final Map<String, dynamic>? rackMasterSlot = useRackGid
+        ? (device['isMaster'] == false ? null : device)
+        : null;
+    final Map<String, dynamic>? rackBackupSlot = useRackGid
+        ? (device['isMaster'] == false ? device : null)
+        : null;
+
     final content = Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Container(
-          width: double.infinity,
-          height: 120,
-          decoration: BoxDecoration(
-            image: DecorationImage(
-              image: AssetImage(_getDeviceImage(processType)),
-              fit: BoxFit.contain,
-            ),
-            borderRadius: inGroup
-                ? null
-                : const BorderRadius.only(
-                    topLeft: Radius.circular(8),
-                    topRight: Radius.circular(8),
-                  ),
-          ),
-          child: Stack(
-            clipBehavior: Clip.none,
-            alignment: Alignment.center,
-            children: [
-              Transform.translate(
-                offset: _getStatusOffset(processType),
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: _getStatusBackgroundColor(status),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(
-                      color: Colors.white.withOpacity(0.5),
-                      width: 1.5,
-                    ),
-                  ),
-                  padding: _getStatusPadding(processType, inGroup: inGroup),
-                  child: Text(
-                    _getStatusDisplayText(status, processType),
-                    style: TextStyle(
-                      fontSize: inGroup
-                          ? _getStatusFontSize(processType) - 1
-                          : _getStatusFontSize(processType),
-                      fontWeight: FontWeight.bold,
-                      color: textColor,
-                      fontFamily: 'Microsoft YaHei',
-                    ),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ),
-              if (roleBadge != null)
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: _roleBadgeBottomForProcessType(
-                    processType,
-                    inGroup: inGroup,
-                  ),
-                  child: Text(
-                    roleBadge,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: inGroup ? 11 : 13,
-                      fontWeight: FontWeight.bold,
-                      fontFamily: 'Microsoft YaHei',
-                      color: const Color(0xFF616161),
-                      height: 1.0,
-                      letterSpacing: 1,
-                      shadows: const [
-                        Shadow(
-                          color: Colors.white,
-                          blurRadius: 3,
+        Expanded(
+          child: useRackGid
+              ? _buildRackCabinetVisual(
+                  screenDevice: device,
+                  masterDevice: rackMasterSlot,
+                  backupDevice: rackBackupSlot,
+                )
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    final imgHeight = constraints.maxHeight > 0
+                        ? constraints.maxHeight
+                        : 120.0;
+                    return SizedBox(
+                      width: double.infinity,
+                      height: imgHeight,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          image: DecorationImage(
+                            image: AssetImage(_getDeviceImage(processType)),
+                            fit: BoxFit.contain,
+                            alignment: _getDeviceImageAlignment(
+                              processType,
+                              inGroup: inGroup,
+                            ),
+                            scale: _getDeviceImageScale(
+                              processType,
+                              inGroup: inGroup,
+                            ),
+                          ),
+                          borderRadius: inGroup
+                              ? null
+                              : const BorderRadius.only(
+                                  topLeft: Radius.circular(8),
+                                  topRight: Radius.circular(8),
+                                ),
                         ),
-                      ],
-                    ),
-                  ),
+                        child: Stack(
+                          clipBehavior: Clip.hardEdge,
+                          alignment: Alignment.center,
+                          children: [
+                            if (processType == 'didian' && status == '空闲')
+                              _buildDidianIdleStatusStrip(
+                                imgHeight: imgHeight,
+                                inGroup: inGroup,
+                                textColor: textColor,
+                              )
+                            else
+                              Transform.translate(
+                                offset: _getStatusOffset(
+                                  processType,
+                                  inGroup: inGroup,
+                                ),
+                                child: Container(
+                                  constraints: processType == 'rack'
+                                      ? BoxConstraints(
+                                          minWidth: inGroup ? 28 : 44,
+                                          minHeight: inGroup ? 76 : 112,
+                                        )
+                                      : null,
+                                  decoration: BoxDecoration(
+                                    color: _getStatusBackgroundColor(status),
+                                    borderRadius: BorderRadius.circular(4),
+                                    border: Border.all(
+                                      color: Colors.white.withOpacity(0.5),
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  padding: _getStatusPadding(
+                                    processType,
+                                    inGroup: inGroup,
+                                  ),
+                                  child: Text(
+                                    _getStatusDisplayText(status, processType),
+                                    style: TextStyle(
+                                      fontSize: inGroup
+                                          ? _getStatusFontSize(processType) - 1
+                                          : _getStatusFontSize(processType),
+                                      fontWeight: FontWeight.bold,
+                                      color: textColor,
+                                      fontFamily: 'Microsoft YaHei',
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
+                              ),
+                            if (roleBadge != null)
+                              Positioned(
+                                left: 0,
+                                right: 0,
+                                bottom: _roleBadgeBottomForProcessType(
+                                  processType,
+                                  inGroup: inGroup,
+                                ),
+                                child: Text(
+                                  roleBadge,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: inGroup ? 11 : 13,
+                                    fontWeight: FontWeight.bold,
+                                    fontFamily: 'Microsoft YaHei',
+                                    color: const Color(0xFF616161),
+                                    height: 1.0,
+                                    letterSpacing: 1,
+                                    shadows: const [
+                                      Shadow(
+                                        color: Colors.white,
+                                        blurRadius: 3,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
                 ),
-            ],
-          ),
         ),
         if (showNameAndCounts) ...[
           Padding(
             padding: EdgeInsets.symmetric(
               horizontal: inGroup ? 2 : 3,
-              vertical: inGroup ? 1 : 3,
+              vertical: inGroup ? 1 : 2,
             ),
             child: Text(
               device['name'] as String,
@@ -3802,6 +4291,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
               textAlign: TextAlign.center,
             ),
           ),
+          SizedBox(height: inGroup ? 4 : _attendNameToCountGap),
           Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -3823,29 +4313,93 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return InkWell(
       onTap: isTapDisabled ? null : () => _onAttendDeviceTap(device),
       child: inGroup
-          ? Center(child: content)
-          : Container(
-              decoration: BoxDecoration(
-                color: isRack ? Colors.grey[200] : Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.grey.shade300, width: 1),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Colors.black12,
-                    blurRadius: 1,
-                    offset: Offset(0, 2),
-                  ),
-                ],
+          ? SizedBox.expand(child: content)
+          : SizedBox.expand(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: isRack ? Colors.grey[200] : Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade300, width: 1),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black12,
+                      blurRadius: 1,
+                      offset: Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: useRackGid
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Expanded(
+                            child: ClipRect(
+                              child: _buildRackCabinetVisual(
+                                screenDevice: device,
+                                masterDevice: rackMasterSlot,
+                                backupDevice: rackBackupSlot,
+                              ),
+                            ),
+                          ),
+                          if (showNameAndCounts)
+                            SizedBox(
+                              height: _rackGroupFooterHeight,
+                              child: _buildRackAttendGroupFooter(
+                                displayName: device['name'] as String,
+                                attend: _parseInt(device['attend']),
+                                guest: _parseInt(device['guest']),
+                              ),
+                            ),
+                        ],
+                      )
+                    : content,
               ),
-              child: content,
             ),
+    );
+  }
+
+  /// 地垫「空闲」：贴图片区底部横条铺满。
+  Widget _buildDidianIdleStatusStrip({
+    required double imgHeight,
+    required bool inGroup,
+    required Color textColor,
+  }) {
+    final double stripH = imgHeight *
+        (inGroup ? _didianIdleStripHeightFracInGroup : _didianIdleStripHeightFrac);
+    final double fontSize = (stripH * 0.42).clamp(11.0, 16.0);
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      height: stripH,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: _getStatusBackgroundColor('空闲'),
+          border: Border.all(
+            color: Colors.white.withOpacity(0.5),
+            width: 1.5,
+          ),
+        ),
+        child: Center(
+          child: Text(
+            '空闲',
+            style: TextStyle(
+              fontSize: fontSize,
+              fontWeight: FontWeight.bold,
+              color: textColor,
+              fontFamily: 'Microsoft YaHei',
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ),
     );
   }
 
   String _getDeviceImage(String processType) {
     switch (processType) {
       case 'rack':
-        return 'assets/images/device.png'; // 机架设备
+        return _rackClassicAsset; // 单机柜（无 GID）
       case 'Client':
         return 'assets/images/jsj.png'; // 计算机设备
       case 'didian':
@@ -3855,15 +4409,32 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     }
   }
 
+  /// 设备底图在卡片内的对齐（地垫整体上移，减少顶部留白）
+  Alignment _getDeviceImageAlignment(String processType, {bool inGroup = false}) {
+    switch (processType) {
+      case 'didian':
+        return Alignment(0, inGroup ? -0.72 : -1.0);
+      default:
+        return Alignment.center;
+    }
+  }
+
+  double _getDeviceImageScale(String processType, {bool inGroup = false}) {
+    if (processType == 'didian') {
+      return inGroup ? 1.08 : 1.14;
+    }
+    return 1.0;
+  }
+
   // 根据设备类型获取状态框偏移量
-  Offset _getStatusOffset(String processType) {
+  Offset _getStatusOffset(String processType, {bool inGroup = false}) {
     switch (processType) {
       case 'rack': // 会议厅设备
-        return Offset(-1, -15);
+        return Offset(-1, inGroup ? -15 : -20);
       case 'Client': // 报到显示终端
         return Offset(2, -13);
       case 'didian': // 地垫式报到设备
-        return Offset(-1, 38);
+        return Offset(-1, inGroup ? -4 : -18);
       default:
         return Offset(-1, -15);
     }
@@ -3874,7 +4445,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     if (inGroup) {
       switch (processType) {
         case 'rack':
-          return const EdgeInsets.symmetric(horizontal: 4, vertical: 8);
+          return const EdgeInsets.symmetric(horizontal: 8, vertical: 14);
         case 'Client':
           return const EdgeInsets.symmetric(horizontal: 8, vertical: 6);
         case 'didian':
@@ -3885,7 +4456,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     }
     switch (processType) {
       case 'rack': // 会议厅设备
-        return EdgeInsets.symmetric(horizontal: 6, vertical: 12);
+        return const EdgeInsets.symmetric(horizontal: 8, vertical: 18);
       case 'Client': // 报到显示终端
         return EdgeInsets.symmetric(horizontal: 26, vertical: 9);
       case 'didian': // 地垫式报到设备
@@ -3899,13 +4470,26 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   double _getStatusFontSize(String processType) {
     switch (processType) {
       case 'rack': // 会议厅设备
-        return 16;
+        return 18;
       case 'Client': // 报到显示终端
         return 14;
       case 'didian': // 地垫式报到设备
         return 12;
       default:
         return 16;
+    }
+  }
+
+  /// rack/GID 状态块文字色（浅底用黑字）
+  Color _rackStatusTextColor(String status) {
+    switch (status) {
+      case '工作':
+      case '报到':
+      case '重报':
+      case '空闲':
+        return Colors.black;
+      default:
+        return Colors.white;
     }
   }
 
@@ -3917,7 +4501,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       case '结束':
         return HexColor('#FF6600'); // 半透明橙色
       case '空闲':
-        return HexColor('#000000'); // 半透明黑色
+        return const Color.fromRGBO(242, 242, 242, 1);
       case '联机':
         return Colors.blue;
       case '脱机':
