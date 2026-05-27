@@ -1737,6 +1737,19 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return devices.isNotEmpty ? devices.first : null;
   }
 
+  /// 同 GID 组：出席/列席为组内各设备人数之和。
+  ({int attend, int guest}) _sumAttendGuestInGroup(
+    List<Map<String, dynamic>> devices,
+  ) {
+    var attend = 0;
+    var guest = 0;
+    for (final d in devices) {
+      attend += _parseInt(d['attend']);
+      guest += _parseInt(d['guest']);
+    }
+    return (attend: attend, guest: guest);
+  }
+
   /// 当前在用的主机/备机（优先 isActive，其次工作状态，最后默认主）
   Map<String, dynamic>? _activeDeviceInGroup(
     List<Map<String, dynamic>> devices,
@@ -1814,6 +1827,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
               ? true
               : (master == false ? false : null),
           processType: d['ProcessType']?.toString(),
+          attend: _parseInt(d['attend']),
+          guest: _parseInt(d['guest']),
         );
       }).toList();
     }
@@ -3968,8 +3983,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     final displayName = masterName.isNotEmpty
         ? masterName
         : (groupName.trim().isNotEmpty ? groupName.trim() : '');
-    final attend = master?['attend'] ?? 0;
-    final guest = master?['guest'] ?? 0;
+    final groupCounts = _sumAttendGuestInGroup(devices);
+    final attend = groupCounts.attend;
+    final guest = groupCounts.guest;
     final bool rackGid =
         isRack && devices.isNotEmpty && _deviceHasGid(devices.first);
 

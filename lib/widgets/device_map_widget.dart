@@ -767,11 +767,15 @@ class GidMapMemberInfo {
     required this.statusLookupKey,
     this.isMaster,
     this.processType,
+    this.attend = 0,
+    this.guest = 0,
   });
 
   final String statusLookupKey;
   final bool? isMaster;
   final String? processType;
+  final int attend;
+  final int guest;
 }
 
 /// 点位图层项：单点或同 GID 合并
@@ -1124,6 +1128,7 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     return _wrapMapMarkerHoverTarget(
       point: point,
       lookupKey: master?.statusLookupKey,
+      gidMembers: members,
       hoverKey: hoverKey,
       width: rackW,
       height: rackH,
@@ -1294,10 +1299,27 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     return s.isEmpty ? raw.trim() : s;
   }
 
+  ({int attend, int guest}) _sumGidMemberCounts(
+    List<GidMapMemberInfo> members,
+  ) {
+    var attend = 0;
+    var guest = 0;
+    for (final m in members) {
+      attend += m.attend;
+      guest += m.guest;
+    }
+    return (attend: attend, guest: guest);
+  }
+
   ({int attend, int guest}) _resolveAttendGuest(
     FacilityPoint point, {
     String? lookupKey,
+    List<GidMapMemberInfo> gidMembers = const [],
   }) {
+    if (gidMembers.isNotEmpty) {
+      return _sumGidMemberCounts(gidMembers);
+    }
+
     final stats = widget.stationStats;
     if (stats == null) return (attend: 0, guest: 0);
 
@@ -1327,11 +1349,16 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
   String _formatHoverPopupLabel(
     FacilityPoint point, {
     String? lookupKey,
+    List<GidMapMemberInfo> gidMembers = const [],
   }) {
     final name = _stripHoverMapNameDecorations(
       _resolveDisplayName(point, lookupKey: lookupKey),
     );
-    final counts = _resolveAttendGuest(point, lookupKey: lookupKey);
+    final counts = _resolveAttendGuest(
+      point,
+      lookupKey: lookupKey,
+      gidMembers: gidMembers,
+    );
     return '名称：$name\n出席人数：${counts.attend}\n列席人数：${counts.guest}';
   }
 
@@ -1357,13 +1384,18 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
   Widget _wrapMapMarkerHoverTarget({
     required FacilityPoint point,
     String? lookupKey,
+    List<GidMapMemberInfo> gidMembers = const [],
     required String hoverKey,
     required double width,
     required double height,
     required Widget child,
   }) {
     final isHovered = _hoverMarkerKey == hoverKey;
-    final hoverLabel = _formatHoverPopupLabel(point, lookupKey: lookupKey);
+    final hoverLabel = _formatHoverPopupLabel(
+      point,
+      lookupKey: lookupKey,
+      gidMembers: gidMembers,
+    );
 
     return MouseRegion(
       onEnter: (_) => setState(() => _hoverMarkerKey = hoverKey),
@@ -1420,6 +1452,7 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
               index: i,
               point: showPoints[i],
               member: i < showMembers.length ? showMembers[i] : null,
+              gidMembers: members,
               unitW: unitW,
               overlap: overlap,
               markerHeight: markerHeight,
@@ -1433,6 +1466,7 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     required int index,
     required FacilityPoint point,
     GidMapMemberInfo? member,
+    required List<GidMapMemberInfo> gidMembers,
     required double unitW,
     required double overlap,
     required double markerHeight,
@@ -1451,6 +1485,7 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
       child: _wrapMapMarkerHoverTarget(
         point: point,
         lookupKey: member?.statusLookupKey,
+        gidMembers: gidMembers.length > 1 ? gidMembers : const [],
         hoverKey: hoverKey,
         width: unitW,
         height: markerHeight,
