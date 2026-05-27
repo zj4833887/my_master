@@ -13,6 +13,7 @@ import '../scc/scc_client.dart';
 import '../scc/board.dart';
 import '../widgets/device_map_widget.dart';
 import '../widgets/mixed_font_text.dart';
+import '../utils/device_status_colors.dart';
 import '../utils/hex_color.dart';
 import '../utils/local_exit_api.dart';
 import '../utils/show_exit_confirm_dialog.dart';
@@ -1724,9 +1725,9 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return (device['GID']?.toString() ?? '').trim().isNotEmpty;
   }
 
-  /// 同 GID 主备机柜用 device2；无 GID 仍用 device.png 原样式。
-  bool _useRackGidVisual(Map<String, dynamic> device) {
-    return device['ProcessType'] == 'rack' && _deviceHasGid(device);
+  /// 机柜（单机柜与 GID）统一 device22 叠层与状态配色。
+  bool _useRackCabinetVisual(Map<String, dynamic> device) {
+    return device['ProcessType'] == 'rack';
   }
 
   Map<String, dynamic>? _masterDeviceInGroup(List<Map<String, dynamic>> devices) {
@@ -1754,7 +1755,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     Map<String, dynamic> device, {
     bool inGroup = false,
   }) {
-    if (_useRackGidVisual(device)) return null;
+    if (_useRackCabinetVisual(device)) return null;
     if (!inGroup && device['status']?.toString() != '联机') return null;
     if (device['isMaster'] == true) return '主';
     if (device['isMaster'] == false) return '备';
@@ -1812,6 +1813,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           isMaster: master == true
               ? true
               : (master == false ? false : null),
+          processType: d['ProcessType']?.toString(),
         );
       }).toList();
     }
@@ -3343,6 +3345,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     final Map<String, String> facilityNameMap = {};
     final Map<String, String> deviceGidMap = {};
     final Map<String, bool> deviceIsMasterMap = {};
+    final Map<String, String> deviceProcessTypeMap = {};
     final gidMembersByGid = _buildGidMembersForMap();
     for (var device in _devices) {
       final deviceName = device['name']?.toString() ?? '';
@@ -3369,6 +3372,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
       if (gid.isNotEmpty) {
         putDeviceKeys((key) => deviceGidMap[key] = gid);
+      }
+      final processType = device['ProcessType']?.toString() ?? '';
+      if (processType.isNotEmpty) {
+        putDeviceKeys((key) => deviceProcessTypeMap[key] = processType);
       }
       putDeviceKeys((key) => deviceIsMasterMap[key] = isMaster);
 
@@ -3405,6 +3412,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           facilityNameMap: facilityNameMap,
           deviceGidMap: deviceGidMap,
           deviceIsMasterMap: deviceIsMasterMap,
+          deviceProcessTypeMap: deviceProcessTypeMap,
           gidMembersByGid: gidMembersByGid,
           stationStats: _stationStats,
         );
@@ -3570,8 +3578,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     const crossAxisCount = 8;
     const spacing = 10.0;
     const padding = 10.0;
-    // 卡片略增高；aspectRatio 越小，格子越高
-    const aspectRatio = 0.58;
+    // aspectRatio 越大格子越矮，便于一屏放下 3 排
+    const aspectRatio = 0.68;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -3612,11 +3620,12 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
   static const String _rackClassicAsset = 'assets/images/device.png';
   /// 同 GID 主备机柜底图；屏幕与工控状态由代码叠加。
-  static const String _rackGidAsset = 'assets/images/device2.png';
+  static const String _rackGidAsset = 'assets/images/device22.png';
   static const double _rackImageAspect = 1044 / 1490;
   // 大屏叠加区 = 红框范围：屏顶至工控机上方（1044×1490 标定）
   static const double _rackScreenLeft = 280 / 1044;
-  static const double _rackScreenTop = 150 / 1490;
+  static const double _rackScreenTop = 100 / 1490;
+  static const Alignment _rackScreenPanelAlign = Alignment(-0.14, -0.22);
   static const double _rackScreenRight = (1044 - 854) / 1044;
   static const double _rackScreenBottom = (1490 - 1034) / 1490;
   /// 红框内联机色块：窄高竖条，垂直居中
@@ -3625,16 +3634,21 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
   /// 大屏竖排状态字间距（相对字号）
   static const double _rackScreenCharGapFrac = 0.48;
   // 工控机中心 x；状态条在硬件下方灰条区
-  static const double _rackIpcMasterCenterX = 425 / 1044;
-  static const double _rackIpcBackupCenterX = 726 / 1044;
-  static const double _rackIpcStatusTop = 1210 / 1490;
+  static const double _rackIpcMasterCenterX = 395 / 1044;
+  static const double _rackIpcBackupCenterX = 696 / 1044;
+  static const double _rackIpcStatusTop = 1050 / 1490;
   static const double _rackIpcBarWidthFrac = 48 / 1044;
-  static const double _rackIpcBarHeightFrac = 10 / 1490;
-  static const double _rackIpcBarMinWidth = 22;
-  static const double _rackIpcBarMinHeight = 5;
-  static const double _rackIpcLabelMinSize = 10;
-  /// GID 组卡底部：名称 + 出席/列席（两行，与名称留间距）
-  static const double _rackGroupFooterHeight = 46;
+  static const double _rackIpcBarHeightFrac = 14 / 1490;
+  static const double _rackIpcBarMinWidth = 24;
+  static const double _rackIpcBarMinHeight = 7;
+  static const double _rackIpcLabelMinSize = 11;
+  /// GID 组卡底部：名称 + 出席/列席（两行）
+  static const double _rackGroupFooterHeight = 48;
+  static const double _rackGroupNameToCountGap = 2;
+  static const double _rackGroupAttendGuestGap = 4;
+  static const double _rackGroupFooterPullUp = 7;
+  /// 机柜图在格子内缩放（略小以腾出 3 排空间）
+  static const double _rackCabinetFittedScale = 0.86;
   static const double _attendNameToCountGap = 6;
   /// 地垫空闲：底部状态条高度（相对图片区）
   static const double _didianIdleStripHeightFrac = 0.34;
@@ -3649,7 +3663,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       h = maxHeight;
       w = h * _rackImageAspect;
     }
-    return Size(w, h);
+    return Size(w * _rackCabinetFittedScale, h * _rackCabinetFittedScale);
   }
 
   /// 主机同组：单机柜；大屏为当前在用机状态，底部为主/备工控机联机指示。
@@ -3775,7 +3789,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
               fit: BoxFit.fill,
               filterQuality: FilterQuality.high,
               gaplessPlayback: false,
-              key: const ValueKey('rack_gid_device2_v4'),
+              key: const ValueKey('rack_gid_device22'),
             ),
             Positioned(
               left: w * _rackScreenLeft,
@@ -3783,7 +3797,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
               right: w * _rackScreenRight,
               bottom: h * _rackScreenBottom,
               child: Align(
-                alignment: Alignment.center,
+                alignment: _rackScreenPanelAlign,
                 child: _buildRackScreenPanel(
                   screenStatus,
                   slotWidth: w * (1 - _rackScreenLeft - _rackScreenRight),
@@ -3960,9 +3974,12 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         isRack && devices.isNotEmpty && _deviceHasGid(devices.first);
 
     final decoration = BoxDecoration(
-      color: isRack ? Colors.grey[200] : Colors.white,
+      color: isRack ? DeviceStatusColors.rackCardSurface : Colors.white,
       borderRadius: BorderRadius.circular(8),
-      border: Border.all(color: Colors.grey.shade300, width: 1),
+      border: Border.all(
+        color: isRack ? DeviceStatusColors.rackCardBorder : Colors.grey.shade300,
+        width: 1,
+      ),
       boxShadow: const [
         BoxShadow(
           color: Colors.black12,
@@ -4079,7 +4096,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     required int guest,
   }) {
     const footerTextStyle = TextStyle(
-      fontSize: 11,
+      fontSize: 12,
       height: 1.0,
       fontWeight: FontWeight.w600,
       fontFamily: 'Microsoft YaHei',
@@ -4088,31 +4105,40 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return SizedBox(
       height: _rackGroupFooterHeight,
       width: double.infinity,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
+      child: Transform.translate(
+        offset: const Offset(0, -_rackGroupFooterPullUp),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(4, 0, 4, 2),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.start,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
             if (displayName.isNotEmpty)
               Text(
                 displayName,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.center,
-                style: footerTextStyle.copyWith(color: Colors.black),
+                style: footerTextStyle.copyWith(
+                  color: Colors.black,
+                  height: 1.05,
+                ),
               ),
             if (displayName.isNotEmpty)
-              SizedBox(height: _attendNameToCountGap),
+              const SizedBox(height: _rackGroupNameToCountGap),
             MixedFontText(
               '出席: $attend',
-              style: footerTextStyle,
+              textAlign: TextAlign.center,
+              style: footerTextStyle.copyWith(height: 1.05),
             ),
-            const SizedBox(height: 2),
+            const SizedBox(height: _rackGroupAttendGuestGap),
             MixedFontText(
               '列席: $guest',
-              style: footerTextStyle,
+              textAlign: TextAlign.center,
+              style: footerTextStyle.copyWith(height: 1.05),
             ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -4143,24 +4169,27 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     final String? roleBadge =
         roleBadgeOverride ?? _deviceRoleBadge(device, inGroup: inGroup);
 
-    final bool useRackGid = _useRackGidVisual(device);
-    final Map<String, dynamic>? rackMasterSlot = useRackGid
+    final bool useRackCabinet = _useRackCabinetVisual(device);
+    final bool rackGidPair = useRackCabinet && _deviceHasGid(device);
+    final Map<String, dynamic>? rackMasterSlot = rackGidPair
         ? (device['isMaster'] == false ? null : device)
         : null;
-    final Map<String, dynamic>? rackBackupSlot = useRackGid
+    final Map<String, dynamic>? rackBackupSlot = rackGidPair
         ? (device['isMaster'] == false ? device : null)
         : null;
+
+    Widget buildRackCabinetArea() => _buildRackCabinetVisual(
+          screenDevice: device,
+          masterDevice: rackMasterSlot,
+          backupDevice: rackBackupSlot,
+        );
 
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Expanded(
-          child: useRackGid
-              ? _buildRackCabinetVisual(
-                  screenDevice: device,
-                  masterDevice: rackMasterSlot,
-                  backupDevice: rackBackupSlot,
-                )
+          child: useRackCabinet
+              ? buildRackCabinetArea()
               : LayoutBuilder(
                   builder: (context, constraints) {
                     final imgHeight = constraints.maxHeight > 0
@@ -4207,12 +4236,10 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                                   inGroup: inGroup,
                                 ),
                                 child: Container(
-                                  constraints: processType == 'rack'
-                                      ? BoxConstraints(
-                                          minWidth: inGroup ? 28 : 44,
-                                          minHeight: inGroup ? 76 : 112,
-                                        )
-                                      : null,
+                                  constraints: _statusBlockConstraints(
+                                    processType,
+                                    inGroup: inGroup,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: _getStatusBackgroundColor(status),
                                     borderRadius: BorderRadius.circular(4),
@@ -4317,9 +4344,12 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
           : SizedBox.expand(
               child: Container(
                 decoration: BoxDecoration(
-                  color: isRack ? Colors.grey[200] : Colors.white,
+                  color: isRack ? DeviceStatusColors.rackCardSurface : Colors.white,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.grey.shade300, width: 1),
+                  border: Border.all(
+        color: isRack ? DeviceStatusColors.rackCardBorder : Colors.grey.shade300,
+        width: 1,
+      ),
                   boxShadow: const [
                     BoxShadow(
                       color: Colors.black12,
@@ -4328,17 +4358,13 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                     ),
                   ],
                 ),
-                child: useRackGid
+                child: isRack
                     ? Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           Expanded(
                             child: ClipRect(
-                              child: _buildRackCabinetVisual(
-                                screenDevice: device,
-                                masterDevice: rackMasterSlot,
-                                backupDevice: rackBackupSlot,
-                              ),
+                              child: buildRackCabinetArea(),
                             ),
                           ),
                           if (showNameAndCounts)
@@ -4426,6 +4452,21 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return 1.0;
   }
 
+  BoxConstraints? _statusBlockConstraints(
+    String processType, {
+    bool inGroup = false,
+  }) {
+    switch (processType) {
+      case 'rack':
+        return BoxConstraints(
+          minWidth: inGroup ? 28 : 44,
+          minHeight: inGroup ? 76 : 112,
+        );
+      default:
+        return null;
+    }
+  }
+
   // 根据设备类型获取状态框偏移量
   Offset _getStatusOffset(String processType, {bool inGroup = false}) {
     switch (processType) {
@@ -4458,7 +4499,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       case 'rack': // 会议厅设备
         return const EdgeInsets.symmetric(horizontal: 8, vertical: 18);
       case 'Client': // 报到显示终端
-        return EdgeInsets.symmetric(horizontal: 26, vertical: 9);
+        return const EdgeInsets.symmetric(horizontal: 26, vertical: 9);
       case 'didian': // 地垫式报到设备
         return EdgeInsets.symmetric(horizontal: 44, vertical: 9);
       default:
@@ -4480,45 +4521,11 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     }
   }
 
-  /// rack/GID 状态块文字色（浅底用黑字）
-  Color _rackStatusTextColor(String status) {
-    switch (status) {
-      case '工作':
-      case '报到':
-      case '重报':
-      case '空闲':
-        return Colors.black;
-      default:
-        return Colors.white;
-    }
-  }
+  Color _rackStatusTextColor(String status) =>
+      DeviceStatusColors.foreground(status);
 
-  // 根据状态获取背景颜色
-  Color _getStatusBackgroundColor(String status) {
-    switch (status) {
-      case '工作':
-        return HexColor('#FFFFFF'); // 半透明白色
-      case '结束':
-        return HexColor('#FF6600'); // 半透明橙色
-      case '空闲':
-        return const Color.fromRGBO(242, 242, 242, 1);
-      case '联机':
-        return Colors.blue;
-      case '脱机':
-        return Colors.green; // 半透明绿色
-      case '设备':
-        return Colors.purple.withOpacity(0.8); // 半透明紫色
-      case '重报':
-        return HexColor('#00F7DE'); // 半透明青色
-      case '报到':
-        // 报到要求：黄色背景 + 黑色文字（与 Vue: #ffff00 一致）
-        return HexColor('#FFFF00');
-      case '错卡':
-        return HexColor('#ffa500'); // 半透明橙色
-      default:
-        return Colors.black.withOpacity(0.6); // 默认半透明黑色
-    }
-  }
+  Color _getStatusBackgroundColor(String status) =>
+      DeviceStatusColors.background(status);
 
   // 修改状态显示文本，只有rack设备需要换行
   String _getStatusDisplayText(String status, String processType) {

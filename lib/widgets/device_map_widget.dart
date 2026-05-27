@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../utils/station_stat_lookup.dart';
+import 'attend_device_map_marker.dart';
+import 'rack_gid_map_marker.dart';
 
 /// 设备类型，用于控制颜色与图例
 enum FacilityType {
@@ -739,6 +741,7 @@ class DeviceMapWidget extends StatefulWidget {
     this.facilityNameMap, // 设备显示名称：与 deviceStatusMap 相同的 key（FacilityID/IP/名称等）-> 名称
     this.deviceGidMap, // 设备 GID：key 与 deviceStatusMap 一致
     this.deviceIsMasterMap, // 是否主机：key 与 deviceStatusMap 一致
+    this.deviceProcessTypeMap, // ProcessType：key 与 deviceStatusMap 一致
     this.gidMembersByGid, // 同 GID 的 WS 设备；设计图仅 1 个点时仍可画主备
     this.stationStats, // 站点人数：Station -> { attend, guest }（与 WS_StationNum 一致，查找见 lookupStationStatRow）
   });
@@ -750,6 +753,7 @@ class DeviceMapWidget extends StatefulWidget {
   final Map<String, String>? facilityNameMap;
   final Map<String, String>? deviceGidMap;
   final Map<String, bool>? deviceIsMasterMap;
+  final Map<String, String>? deviceProcessTypeMap;
   final Map<String, List<GidMapMemberInfo>>? gidMembersByGid;
   final Map<String, Map<String, int>>? stationStats;
 
@@ -762,10 +766,12 @@ class GidMapMemberInfo {
   const GidMapMemberInfo({
     required this.statusLookupKey,
     this.isMaster,
+    this.processType,
   });
 
   final String statusLookupKey;
   final bool? isMaster;
+  final String? processType;
 }
 
 /// 点位图层项：单点或同 GID 合并
@@ -903,7 +909,9 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
                               final layoutY = anchor.layoutY;
                               final coordAnchor =
                                   _readCoordinateAnchor(settings);
-                              final layerWidth = item.isGroup
+                              final rackCabinet =
+                                  _isRackCabinetMapItem(item, anchor);
+                              final layerWidth = item.isGroup && !rackCabinet
                                   ? markerWidth *
                                       (1.85 + 0.12 * (item.points.length - 2))
                                       .clamp(1.85, 2.4)
@@ -920,26 +928,41 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
                               return Positioned(
                                 left: left,
                                 top: top,
-                                child: item.isGroup
-                                    ? _buildGidGroupMarker(
-                                        context,
-                                        points: item.points,
-                                        members: item.members,
-                                        markerWidth: markerWidth,
-                                        markerHeight: markerHeight,
-                                      )
-                                    : _buildFacilityMarker(
-                                        context,
+                                child: rackCabinet
+                                    ? _buildRackGidMapMarkerHover(
                                         point: anchor,
-                                        status: _resolveStatus(
-                                          widget.deviceStatusMap,
-                                          anchor,
-                                        ),
-                                        isPort1030: isPort1030,
-                                        isPort8084: isPort8084,
+                                        members: () {
+                                          if (item.isGroup) {
+                                            return item.members;
+                                          }
+                                          final gidMembers =
+                                              _membersForPointGid(anchor);
+                                          return gidMembers.isNotEmpty
+                                              ? gidMembers
+                                              : item.members;
+                                        }(),
                                         markerWidth: markerWidth,
-                                        markerHeight: markerHeight,
-                                      ),
+                                      )
+                                    : item.isGroup
+                                        ? _buildGidGroupMarker(
+                                            context,
+                                            points: item.points,
+                                            members: item.members,
+                                            markerWidth: markerWidth,
+                                            markerHeight: markerHeight,
+                                          )
+                                        : _buildFacilityMarker(
+                                            context,
+                                            point: anchor,
+                                            status: _resolveStatus(
+                                              widget.deviceStatusMap,
+                                              anchor,
+                                            ),
+                                            isPort1030: isPort1030,
+                                            isPort8084: isPort8084,
+                                            markerWidth: markerWidth,
+                                            markerHeight: markerHeight,
+                                          ),
                               );
                             }),
                           ],
@@ -1005,6 +1028,119 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
 
   String _resolveGid(FacilityPoint point) =>
       (_lookupDeviceField(widget.deviceGidMap, point) ?? '').trim();
+
+  String? _resolveProcessType(FacilityPoint point) =>
+      _lookupDeviceField(widget.deviceProcessTypeMap, point);
+
+  /// 与报到设备列表一致的 ProcessType（用于底图与状态叠层）。
+  String _resolveMapProcessType(
+    FacilityPoint point, {
+    required bool isPort1030,
+    required bool isPort8084,
+  }) {
+    final fromMap = _resolveProcessType(point)?.trim() ?? '';
+    if (fromMap == 'rack') return 'rack';
+    if (fromMap.isNotEmpty) return fromMap;
+    if (isPort1030 || point.facilityType == FacilityType.floorDevice) {
+      return 'didian';
+    }
+    if (point.facilityType == FacilityType.cabinet) return 'rack';
+    return 'Client';
+  }
+
+  List<GidMapMemberInfo> _membersForPointGid(FacilityPoint point) {
+    final gid = _resolveGid(point);
+    if (gid.isEmpty) return const [];
+    return widget.gidMembersByGid?[gid] ?? const [];
+  }
+
+  bool _isRackGidMapItem(_MapMarkerLayerItem item, FacilityPoint anchor) {
+    final gid = item.gid.isNotEmpty ? item.gid : _resolveGid(anchor);
+    if (gid.isEmpty) return false;
+    if (item.members.any((m) => m.processType == 'rack')) return true;
+    final ws = widget.gidMembersByGid?[gid];
+    if (ws != null && ws.any((m) => m.processType == 'rack')) return true;
+    if (_resolveProcessType(anchor) == 'rack') return true;
+    return anchor.facilityType == FacilityType.cabinet;
+  }
+
+  /// 机柜点位（含无 GID 单机柜）与报到列表一致，用 device22 叠层。
+  bool _isRackCabinetMapItem(_MapMarkerLayerItem item, FacilityPoint anchor) {
+    if (_isRackGidMapItem(item, anchor)) return true;
+    if (_resolveProcessType(anchor) == 'rack') return true;
+    return anchor.facilityType == FacilityType.cabinet;
+  }
+
+  GidMapMemberInfo? _pickMasterMember(List<GidMapMemberInfo> members) {
+    for (final m in members) {
+      if (m.isMaster == true) return m;
+    }
+    return members.isNotEmpty ? members.first : null;
+  }
+
+  GidMapMemberInfo? _pickBackupMember(List<GidMapMemberInfo> members) {
+    for (final m in members) {
+      if (m.isMaster == false) return m;
+    }
+    if (members.length > 1) {
+      final master = _pickMasterMember(members);
+      for (final m in members) {
+        if (!identical(m, master)) return m;
+      }
+    }
+    return null;
+  }
+
+  String _resolveScreenStatusForRackGid(
+    FacilityPoint point,
+    List<GidMapMemberInfo> members,
+  ) {
+    for (final m in members) {
+      final st = _resolveStatusForMember(point, m);
+      if (st == '工作' || st == '报到' || st == '重报') {
+        return st ?? '空闲';
+      }
+    }
+    final master = _pickMasterMember(members);
+    return _resolveStatusForMember(point, master) ??
+        _resolveStatus(widget.deviceStatusMap, point) ??
+        '空闲';
+  }
+
+  Widget _buildRackGidMapMarkerHover({
+    required FacilityPoint point,
+    required List<GidMapMemberInfo> members,
+    required double markerWidth,
+  }) {
+    final master = _pickMasterMember(members);
+    final backup = _pickBackupMember(members);
+    final screenStatus = _resolveScreenStatusForRackGid(point, members);
+    final rackW = markerWidth.clamp(20.0, 72.0);
+    final rackH = rackW / RackGidMapMarker.imageAspect;
+    final hoverKey = members.isEmpty
+        ? _markerSelectionKey(point)
+        : 'rackgid:${point.selectionKey}';
+
+    return _wrapMapMarkerHoverTarget(
+      point: point,
+      lookupKey: master?.statusLookupKey,
+      hoverKey: hoverKey,
+      width: rackW,
+      height: rackH,
+      child: RackGidMapMarker(
+        width: rackW,
+        screenStatus: screenStatus,
+        masterStatus: master != null
+            ? _resolveStatusForMember(point, master)
+            : null,
+        backupStatus: backup != null
+            ? _resolveStatusForMember(point, backup)
+            : null,
+        showMaster: master != null,
+        showBackup: backup != null,
+      ),
+    );
+  }
 
   bool? _resolveIsMaster(FacilityPoint point) =>
       _lookupDeviceField(widget.deviceIsMasterMap, point);
@@ -1341,53 +1477,21 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     bool? isPort8084,
   }) {
     final resolvedStatus =
-        status ?? _resolveStatus(widget.deviceStatusMap, point);
+        status ?? _resolveStatus(widget.deviceStatusMap, point) ?? '空闲';
     final port1030 = isPort1030 ?? _resolvePort(widget.port1030Map, point);
     final port8084 = isPort8084 ?? _resolvePort(widget.port8084Map, point);
-    final statusImagePath = _getStatusImagePath(
-      resolvedStatus,
+    final processType = _resolveMapProcessType(
+      point,
       isPort1030: port1030,
       isPort8084: port8084,
     );
-    final fallbackImage = port1030
-        ? 'assets/images/dj_kongxian.png'
-        : (port8084
-            ? 'assets/images/jb_konxian.png'
-            : 'assets/images/jsj_kongxian.png');
 
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        Image.asset(
-          statusImagePath ?? fallbackImage,
-          width: markerWidth,
-          height: markerHeight,
-          fit: BoxFit.contain,
-          errorBuilder: (context, error, stackTrace) {
-            return _buildDefaultMarker(point, false, markerHeight);
-          },
-        ),
-        if (roleLabel != null)
-          Positioned(
-            bottom: markerHeight * 0.12,
-            left: 0,
-            right: 0,
-            child: Text(
-              roleLabel,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                fontSize: (markerWidth * 0.26).clamp(6.0, 8.0),
-                fontWeight: FontWeight.w600,
-                fontFamily: 'Microsoft YaHei',
-                color: const Color(0xFF616161),
-                height: 1,
-                shadows: const [
-                  Shadow(color: Colors.white, blurRadius: 2),
-                ],
-              ),
-            ),
-          ),
-      ],
+    return AttendDeviceMapMarker(
+      width: markerWidth,
+      height: markerHeight,
+      status: resolvedStatus,
+      processType: processType,
+      roleLabel: roleLabel,
     );
   }
 
@@ -1433,34 +1537,23 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     double markerWidth = 20,
     double markerHeight = 20,
   }) {
-    // 根据状态获取对应的图片路径
-    final statusImagePath = _getStatusImagePath(
-      status,
+    final double effectiveWidth =
+        markerWidth > 0 ? markerWidth : 20.0;
+    final double effectiveHeight =
+        markerHeight > 0 ? markerHeight : (isPort8084 ? 40.0 : 20.0);
+    final resolvedStatus =
+        status ?? _resolveStatus(widget.deviceStatusMap, point) ?? '空闲';
+    final processType = _resolveMapProcessType(
+      point,
       isPort1030: isPort1030,
       isPort8084: isPort8084,
     );
-    final fallbackImage = isPort1030
-        ? 'assets/images/dj_kongxian.png'
-        : (isPort8084
-            ? 'assets/images/jb_konxian.png'
-            : 'assets/images/jsj_kongxian.png');
-    final double effectiveWidth =
-        markerWidth > 0 ? markerWidth : (isPort8084 ? 20.0 : 20.0);
-    final double effectiveHeight =
-        markerHeight > 0 ? markerHeight : (isPort8084 ? 40.0 : 20.0);
 
-    final visual = SizedBox(
+    final visual = AttendDeviceMapMarker(
       width: effectiveWidth,
       height: effectiveHeight,
-      child: Image.asset(
-        statusImagePath ?? fallbackImage,
-        width: effectiveWidth,
-        height: effectiveHeight,
-        fit: BoxFit.contain,
-        errorBuilder: (context, error, stackTrace) {
-          return _buildDefaultMarker(point, false, effectiveHeight);
-        },
-      ),
+      status: resolvedStatus,
+      processType: processType,
     );
 
     return _wrapMapMarkerHoverTarget(
@@ -1469,109 +1562,6 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
       width: effectiveWidth,
       height: effectiveHeight,
       child: visual,
-    );
-  }
-
-  /// 根据状态获取对应的图片路径
-  String? _getStatusImagePath(
-    String? status, {
-    bool isPort1030 = false,
-    bool isPort8084 = false,
-  }) {
-    if (status == null) {
-      return isPort1030
-          ? 'assets/images/dj_kongxian.png'
-          : (isPort8084
-              ? 'assets/images/jb_konxian.png'
-              : 'assets/images/jsj_kongxian.png');
-    }
-
-    // 1030 端口使用 dj_ 前缀图片
-    if (isPort1030) {
-      switch (status) {
-        case '空闲':
-          return 'assets/images/dj_kongxian.png';
-        case '报到':
-          return 'assets/images/dj_baodao.png';
-        case '工作':
-          return 'assets/images/dj_gongzuo.png';
-        case '重报':
-          return 'assets/images/dj_chongbao.png';
-        default:
-          return 'assets/images/dj_kongxian.png';
-      }
-    }
-    
-    // 8084 端口使用 jb_ 前缀图片
-    if (isPort8084) {
-      switch (status) {
-        case '空闲':
-          return 'assets/images/jb_konxian.png';
-        case '报到':
-          return 'assets/images/jb_baodao.png';
-        case '工作':
-          return 'assets/images/jb_gongzuo.png';
-        case '重报':
-          return 'assets/images/jb_chongbao.png';
-        default:
-          return 'assets/images/jb_konxian.png';
-      }
-    }
-
-    // 其他端口统一用 jsj_ 前缀图片
-    switch (status) {
-      case '空闲':
-        return 'assets/images/jsj_kongxian.png';
-      case '报到':
-        return 'assets/images/jsj_baodao.png';
-      case '工作':
-        return 'assets/images/jsj_gongzuo.png';
-      case '重报':
-        return 'assets/images/jsj_chongbao.png';
-      default:
-        return 'assets/images/jsj_kongxian.png';
-    }
-  }
-
-  /// 默认标记样式（当没有状态图片时使用）
-  Widget _buildDefaultMarker(
-    FacilityPoint point,
-    bool isSelected,
-    double markerHeight,
-  ) {
-    return Container(
-      width: 20,
-      height: markerHeight,
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(
-          color: Colors.black26,
-          width: 1.5,
-        ),
-        boxShadow: isSelected
-            ? [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.25),
-                  blurRadius: 8,
-                  spreadRadius: 2,
-                ),
-              ]
-            : null,
-      ),
-      child: Center(
-        child: Text(
-          point.facilityId.length > 4
-              ? point.facilityId.substring(0, 4)
-              : point.facilityId,
-          style: const TextStyle(
-            color: Colors.black87,
-            fontSize: 12,
-            fontWeight: FontWeight.bold,
-          ),
-          textAlign: TextAlign.center,
-        ),
-      ),
     );
   }
 
