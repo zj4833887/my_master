@@ -108,9 +108,13 @@ class AttendDeviceMapMarker extends StatelessWidget {
 
           ),
 
-          if (processType == 'didian' && status == '空闲')
+          if (processType == 'didian')
 
-            _DidianIdleStrip(width: width, height: height)
+            _DidianStatusStrip(
+              width: width,
+              height: height,
+              status: status,
+            )
 
           else
 
@@ -332,13 +336,15 @@ class _ScreenStatusOverlay extends StatelessWidget {
 
 
 
-class _DidianIdleStrip extends StatelessWidget {
+class _DidianStatusStrip extends StatelessWidget {
 
-  const _DidianIdleStrip({
+  const _DidianStatusStrip({
 
     required this.width,
 
     required this.height,
+
+    required this.status,
 
   });
 
@@ -347,6 +353,7 @@ class _DidianIdleStrip extends StatelessWidget {
   final double width;
 
   final double height;
+  final String status;
 
 
 
@@ -357,10 +364,6 @@ class _DidianIdleStrip extends StatelessWidget {
     final stripH = height * 0.34;
 
     final fontSize = (stripH * 0.42).clamp(5.0, 10.0);
-
-    const status = '空闲';
-
-
 
     return Positioned(
 

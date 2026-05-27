@@ -4239,10 +4239,11 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
                           clipBehavior: Clip.hardEdge,
                           alignment: Alignment.center,
                           children: [
-                            if (processType == 'didian' && status == '空闲')
-                              _buildDidianIdleStatusStrip(
+                            if (processType == 'didian')
+                              _buildDidianStatusStrip(
                                 imgHeight: imgHeight,
                                 inGroup: inGroup,
+                                status: status,
                                 textColor: textColor,
                               )
                             else
@@ -4400,10 +4401,11 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     );
   }
 
-  /// 地垫「空闲」：贴图片区底部横条铺满。
-  Widget _buildDidianIdleStatusStrip({
+  /// 地垫状态条：所有状态固定贴底，位置与「空闲」一致。
+  Widget _buildDidianStatusStrip({
     required double imgHeight,
     required bool inGroup,
+    required String status,
     required Color textColor,
   }) {
     final double stripH = imgHeight *
@@ -4416,7 +4418,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       height: stripH,
       child: DecoratedBox(
         decoration: BoxDecoration(
-          color: _getStatusBackgroundColor('空闲'),
+          color: _getStatusBackgroundColor(status),
           border: Border.all(
             color: Colors.white.withOpacity(0.5),
             width: 1.5,
@@ -4424,7 +4426,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
         ),
         child: Center(
           child: Text(
-            '空闲',
+            status,
             style: TextStyle(
               fontSize: fontSize,
               fontWeight: FontWeight.bold,
