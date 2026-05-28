@@ -1750,10 +1750,12 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return (attend: attend, guest: guest);
   }
 
-  /// 当前在用的主机/备机（优先 isActive，其次工作状态，最后默认主）
-  Map<String, dynamic>? _activeDeviceInGroup(
+  /// 机柜大屏状态来源：主脱机时展示备机，否则优先在用/工作中的设备。
+  Map<String, dynamic>? _screenDeviceInGroup(
     List<Map<String, dynamic>> devices,
   ) {
+    if (devices.isEmpty) return null;
+
     for (final d in devices) {
       if (d['isActive'] == true) return d;
     }
@@ -1761,7 +1763,21 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
       final st = d['status']?.toString() ?? '';
       if (st == '工作' || st == '报到' || st == '重报') return d;
     }
-    return _masterDeviceInGroup(devices);
+
+    final master = _masterDeviceInGroup(devices);
+    final backup = _backupDeviceInGroup(devices);
+    if (master != null &&
+        backup != null &&
+        (master['status']?.toString() ?? '') == '脱机') {
+      return backup;
+    }
+
+    for (final d in devices) {
+      final st = d['status']?.toString() ?? '';
+      if (st != '脱机') return d;
+    }
+
+    return master ?? devices.first;
   }
 
   String? _deviceRoleBadge(
@@ -1827,6 +1843,8 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
               ? true
               : (master == false ? false : null),
           processType: d['ProcessType']?.toString(),
+          status: d['status']?.toString(),
+          isActive: d['isActive'] == true,
           attend: _parseInt(d['attend']),
           guest: _parseInt(d['guest']),
         );
@@ -3686,7 +3704,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     final Map<String, dynamic>? masterDevice = _masterDeviceInGroup(devices) ??
         (devices.isNotEmpty ? devices.first : null);
     final Map<String, dynamic>? backupDevice = _backupDeviceInGroup(devices);
-    final Map<String, dynamic>? activeDevice = _activeDeviceInGroup(devices);
+    final Map<String, dynamic>? screenDevice = _screenDeviceInGroup(devices);
 
     Widget tapHalf(Map<String, dynamic>? device) {
       if (device == null) return const Expanded(child: SizedBox());
@@ -3719,7 +3737,7 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
               children: [
                 _buildRackCabinetStack(
                   screenStatus:
-                      activeDevice?['status']?.toString() ?? '空闲',
+                      screenDevice?['status']?.toString() ?? '空闲',
                   masterDevice: masterDevice,
                   backupDevice: backupDevice,
                 ),

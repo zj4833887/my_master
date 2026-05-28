@@ -767,6 +767,8 @@ class GidMapMemberInfo {
     required this.statusLookupKey,
     this.isMaster,
     this.processType,
+    this.status,
+    this.isActive = false,
     this.attend = 0,
     this.guest = 0,
   });
@@ -774,6 +776,8 @@ class GidMapMemberInfo {
   final String statusLookupKey;
   final bool? isMaster;
   final String? processType;
+  final String? status;
+  final bool isActive;
   final int attend;
   final int guest;
 }
@@ -1095,20 +1099,45 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     return null;
   }
 
+  /// 与报到设备 [_screenDeviceInGroup] 一致：主脱机时大屏展示备机状态。
+  String _memberStatus(FacilityPoint point, GidMapMemberInfo member) {
+    final cached = member.status?.trim() ?? '';
+    if (cached.isNotEmpty) return cached;
+    return _resolveStatusForMember(point, member) ?? '空闲';
+  }
+
   String _resolveScreenStatusForRackGid(
     FacilityPoint point,
     List<GidMapMemberInfo> members,
   ) {
-    for (final m in members) {
-      final st = _resolveStatusForMember(point, m);
-      if (st == '工作' || st == '报到' || st == '重报') {
-        return st ?? '空闲';
-      }
+    if (members.isEmpty) {
+      return _resolveStatus(widget.deviceStatusMap, point) ?? '空闲';
     }
+
+    for (final m in members) {
+      if (m.isActive) return _memberStatus(point, m);
+    }
+    for (final m in members) {
+      final st = _memberStatus(point, m);
+      if (st == '工作' || st == '报到' || st == '重报') return st;
+    }
+
     final master = _pickMasterMember(members);
-    return _resolveStatusForMember(point, master) ??
-        _resolveStatus(widget.deviceStatusMap, point) ??
-        '空闲';
+    final backup = _pickBackupMember(members);
+    if (master != null &&
+        backup != null &&
+        _memberStatus(point, master) == '脱机') {
+      return _memberStatus(point, backup);
+    }
+
+    for (final m in members) {
+      final st = _memberStatus(point, m);
+      if (st != '脱机') return st;
+    }
+
+    return master != null
+        ? _memberStatus(point, master)
+        : _memberStatus(point, members.first);
   }
 
   Widget _buildRackGidMapMarkerHover({
@@ -1135,12 +1164,8 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
       child: RackGidMapMarker(
         width: rackW,
         screenStatus: screenStatus,
-        masterStatus: master != null
-            ? _resolveStatusForMember(point, master)
-            : null,
-        backupStatus: backup != null
-            ? _resolveStatusForMember(point, backup)
-            : null,
+        masterStatus: master != null ? _memberStatus(point, master) : null,
+        backupStatus: backup != null ? _memberStatus(point, backup) : null,
         showMaster: master != null,
         showBackup: backup != null,
       ),
@@ -1224,7 +1249,12 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
     FacilityPoint point,
     GidMapMemberInfo? member,
   ) {
-    final key = member?.statusLookupKey.trim() ?? '';
+    if (member == null) {
+      return _resolveStatus(widget.deviceStatusMap, point);
+    }
+    final cached = member.status?.trim() ?? '';
+    if (cached.isNotEmpty) return cached;
+    final key = member.statusLookupKey.trim();
     if (key.isNotEmpty) {
       final m = widget.deviceStatusMap;
       if (m != null && m.containsKey(key)) return m[key];
