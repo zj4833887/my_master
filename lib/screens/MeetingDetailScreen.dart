@@ -1737,6 +1737,23 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return devices.isNotEmpty ? devices.first : null;
   }
 
+  bool _isDeviceOffline(Map<String, dynamic> device) {
+    final st = device['status']?.toString().trim() ?? '';
+    if (st == '脱机') return true;
+    return _parseInt(device['ClientStatus']) == 4;
+  }
+
+  List<Map<String, dynamic>> _devicesInSameGid(Map<String, dynamic> device) {
+    final gid = (device['GID']?.toString() ?? '').trim();
+    if (gid.isEmpty) return [device];
+    final group = _devices
+        .where((d) => (d['GID']?.toString() ?? '').trim() == gid)
+        .toList();
+    if (group.isEmpty) return [device];
+    _sortGroupDevicesMasterLeft(group);
+    return group;
+  }
+
   /// 同 GID 组：出席/列席为组内各设备人数之和。
   ({int attend, int guest}) _sumAttendGuestInGroup(
     List<Map<String, dynamic>> devices,
@@ -1750,31 +1767,28 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
     return (attend: attend, guest: guest);
   }
 
-  /// 机柜大屏状态来源：主脱机时展示备机，否则优先在用/工作中的设备。
+  /// 机柜大屏状态来源：主脱机时展示备机（工作/联机等），否则优先在用机。
   Map<String, dynamic>? _screenDeviceInGroup(
     List<Map<String, dynamic>> devices,
   ) {
     if (devices.isEmpty) return null;
 
+    final master = _masterDeviceInGroup(devices);
+    final backup = _backupDeviceInGroup(devices);
+    if (master != null && backup != null && _isDeviceOffline(master)) {
+      return backup;
+    }
+
     for (final d in devices) {
-      if (d['isActive'] == true) return d;
+      if (d['isActive'] == true && !_isDeviceOffline(d)) return d;
     }
     for (final d in devices) {
       final st = d['status']?.toString() ?? '';
       if (st == '工作' || st == '报到' || st == '重报') return d;
     }
 
-    final master = _masterDeviceInGroup(devices);
-    final backup = _backupDeviceInGroup(devices);
-    if (master != null &&
-        backup != null &&
-        (master['status']?.toString() ?? '') == '脱机') {
-      return backup;
-    }
-
     for (final d in devices) {
-      final st = d['status']?.toString() ?? '';
-      if (st != '脱机') return d;
+      if (!_isDeviceOffline(d)) return d;
     }
 
     return master ?? devices.first;
@@ -4205,18 +4219,22 @@ class _MeetingDetailScreenState extends State<MeetingDetailScreen>
 
     final bool useRackCabinet = _useRackCabinetVisual(device);
     final bool rackGidPair = useRackCabinet && _deviceHasGid(device);
-    final Map<String, dynamic>? rackMasterSlot = rackGidPair
-        ? (device['isMaster'] == false ? null : device)
-        : null;
-    final Map<String, dynamic>? rackBackupSlot = rackGidPair
-        ? (device['isMaster'] == false ? device : null)
-        : null;
 
-    Widget buildRackCabinetArea() => _buildRackCabinetVisual(
-          screenDevice: device,
-          masterDevice: rackMasterSlot,
-          backupDevice: rackBackupSlot,
+    Widget buildRackCabinetArea() {
+      if (rackGidPair) {
+        final group = _devicesInSameGid(device);
+        return _buildRackCabinetVisual(
+          screenDevice: _screenDeviceInGroup(group) ?? device,
+          masterDevice: _masterDeviceInGroup(group),
+          backupDevice: _backupDeviceInGroup(group),
         );
+      }
+      return _buildRackCabinetVisual(
+        screenDevice: device,
+        masterDevice: null,
+        backupDevice: null,
+      );
+    }
 
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

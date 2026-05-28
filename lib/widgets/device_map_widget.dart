@@ -1114,30 +1114,29 @@ class _DeviceMapWidgetState extends State<DeviceMapWidget> {
       return _resolveStatus(widget.deviceStatusMap, point) ?? '空闲';
     }
 
-    for (final m in members) {
-      if (m.isActive) return _memberStatus(point, m);
-    }
-    for (final m in members) {
-      final st = _memberStatus(point, m);
-      if (st == '工作' || st == '报到' || st == '重报') return st;
-    }
+    String statusOf(GidMapMemberInfo m) => _memberStatus(point, m);
 
     final master = _pickMasterMember(members);
     final backup = _pickBackupMember(members);
-    if (master != null &&
-        backup != null &&
-        _memberStatus(point, master) == '脱机') {
-      return _memberStatus(point, backup);
+    if (master != null && backup != null && statusOf(master) == '脱机') {
+      return statusOf(backup);
     }
 
     for (final m in members) {
-      final st = _memberStatus(point, m);
-      if (st != '脱机') return st;
+      if (m.isActive && statusOf(m) != '脱机') return statusOf(m);
+    }
+    for (final m in members) {
+      final st = statusOf(m);
+      if (st == '工作' || st == '报到' || st == '重报') return st;
+    }
+
+    for (final m in members) {
+      if (statusOf(m) != '脱机') return statusOf(m);
     }
 
     return master != null
-        ? _memberStatus(point, master)
-        : _memberStatus(point, members.first);
+        ? statusOf(master)
+        : statusOf(members.first);
   }
 
   Widget _buildRackGidMapMarkerHover({
